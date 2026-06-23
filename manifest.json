@@ -1,0 +1,16 @@
+{
+  "name": "Digital Strong Abay — Тренер",
+  "short_name": "DSA Тренер",
+  "description": "Кабинет тренера Федерации борьбы области Абай: группы, занятия, посещаемость",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#EDE7DC",
+  "theme_color": "#7A2331",
+  "lang": "ru",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

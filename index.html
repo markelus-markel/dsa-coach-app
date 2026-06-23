@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#7A2331">
+<title>Digital Strong Abay — Тренер</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#EDE7DC;
+    --surface:#F7F3EA;
+    --surface-raised:#FFFFFF;
+    --ink:#211B16;
+    --ink-muted:#6B5F52;
+    --hairline:#D9CFBC;
+    --red:#B6332E;
+    --red-dark:#8C2622;
+    --blue:#2C4A6E;
+    --gold:#A9802E;
+    --present:#4D6B4A;
+    --late:#B8893B;
+    --excused:#5C7A93;
+    --sick:#7C6E63;
+    --absent:#B6332E;
+    --radius:14px;
+    --radius-sm:8px;
+    --shadow:0 1px 2px rgba(33,27,22,.06), 0 4px 14px rgba(33,27,22,.07);
+    --font-display:'Oswald', 'Arial Narrow', sans-serif;
+    --font-body:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  button{font-family:inherit;}
+  ::selection{background:var(--gold); color:#fff;}
+  :focus-visible{outline:2px solid var(--blue); outline-offset:2px;}
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.001ms !important; transition-duration:.001ms !important;}
+  }
+
+  /* Desktop preview convenience: center as a phone-width column.
+     On a real Android phone (display:standalone) this rule simply never matches. */
+  @media (min-width:480px){
+    body{ background:#3A332B; }
+    #shell{
+      max-width:412px; margin:24px auto; min-height:calc(100vh - 48px);
+      box-shadow:0 20px 60px rgba(0,0,0,.35); border-radius:28px; overflow:hidden;
+    }
+  }
+
+  #shell{ background:var(--bg); min-height:100vh; display:flex; flex-direction:column; position:relative; }
+
+  .app-bar{
+    background:var(--surface); border-bottom:1px solid var(--hairline);
+    padding:14px 16px; display:flex; align-items:center; gap:10px;
+    position:sticky; top:0; z-index:5;
+  }
+  .app-bar h1{
+    font-family:var(--font-display); font-size:18px; font-weight:600; letter-spacing:.2px;
+    margin:0; flex:1; text-transform:uppercase;
+  }
+  .back-btn{
+    background:none; border:none; font-size:20px; color:var(--ink); cursor:pointer;
+    width:36px; height:36px; display:flex; align-items:center; justify-content:center;
+    border-radius:50%;
+  }
+  .back-btn:active{ background:var(--hairline); }
+  .net-pill{
+    font-family:var(--font-body); font-size:11px; font-weight:600; padding:5px 10px;
+    border-radius:999px; cursor:pointer; border:1px solid transparent; user-select:none;
+    display:flex; align-items:center; gap:5px;
+  }
+  .net-pill.online{ background:rgba(77,107,74,.12); color:var(--present); }
+  .net-pill.offline{ background:rgba(182,51,46,.12); color:var(--red); }
+  .net-dot{ width:6px; height:6px; border-radius:50%; background:currentColor; }
+
+  .content{ flex:1; overflow-y:auto; padding:16px; padding-bottom:84px; }
+
+  .sync-banner{
+    background:var(--red-dark); color:#F7F3EA; font-size:12.5px; font-weight:500;
+    padding:9px 16px; display:flex; align-items:center; gap:8px;
+  }
+
+  /* Card with signature "corner-flag" accent strip */
+  .card{
+    background:var(--surface-raised); border-radius:var(--radius); box-shadow:var(--shadow);
+    padding:14px 14px 14px 18px; margin-bottom:12px; position:relative; overflow:hidden;
+  }
+  .card::before{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:4px;
+    background:var(--flag, var(--blue)); transition:background .25s ease;
+  }
+  .card.flag-red{ --flag:var(--red); }
+  .card.flag-blue{ --flag:var(--blue); }
+  .card.flag-gold{ --flag:var(--gold); }
+  .card.flag-muted{ --flag:var(--hairline); }
+
+  .eyebrow{ font-size:11px; color:var(--ink-muted); text-transform:uppercase; letter-spacing:.06em; font-weight:600; margin:0 0 3px; }
+  .card h3{ font-family:var(--font-display); font-size:16.5px; font-weight:600; margin:0 0 4px; }
+  .card p.meta{ font-size:13px; color:var(--ink-muted); margin:0; }
+
+  .stat-row{ display:flex; gap:10px; margin-bottom:16px; }
+  .stat{ flex:1; background:var(--surface-raised); border-radius:var(--radius); box-shadow:var(--shadow); padding:14px; text-align:center; }
+  .stat .num{ font-family:var(--font-display); font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; color:var(--red-dark); }
+  .stat .lbl{ font-size:11.5px; color:var(--ink-muted); margin-top:2px; }
+
+  .section-title{ font-family:var(--font-display); font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-muted); margin:18px 2px 8px; font-weight:600; }
+
+  .btn{
+    border:none; border-radius:var(--radius-sm); padding:13px 18px; font-weight:600; font-size:14.5px;
+    cursor:pointer; width:100%; transition:transform .08s ease, opacity .15s ease;
+  }
+  .btn:active{ transform:scale(.985); }
+  .btn-primary{ background:var(--red); color:#F7F3EA; }
+  .btn-primary:hover{ background:var(--red-dark); }
+  .btn-ghost{ background:transparent; color:var(--blue); border:1.5px solid var(--blue); }
+  .btn-secondary{ background:var(--surface); color:var(--ink); border:1.5px solid var(--hairline); }
+
+  .field{ margin-bottom:14px; }
+  .field label{ display:block; font-size:12.5px; color:var(--ink-muted); margin-bottom:6px; font-weight:500; }
+  .field input{
+    width:100%; padding:13px 14px; border-radius:var(--radius-sm); border:1.5px solid var(--hairline);
+    font-size:15px; font-family:inherit; background:var(--surface-raised); color:var(--ink);
+  }
+  .field input:focus{ border-color:var(--blue); outline:none; }
+
+  .login-hero{ text-align:center; padding:48px 8px 28px; }
+  .login-hero .corner-mark{
+    width:54px; height:54px; margin:0 auto 18px; border-radius:14px; background:var(--red);
+    display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;
+  }
+  .login-hero .corner-mark::after{
+    content:''; position:absolute; right:0; bottom:0; width:0; height:0;
+    border-left:24px solid transparent; border-bottom:24px solid var(--blue);
+  }
+  .login-hero .corner-mark svg{ width:24px; height:24px; fill:var(--surface); position:relative; z-index:2; }
+  .login-hero h1{ font-family:var(--font-display); font-size:21px; text-transform:uppercase; margin:0 0 4px; letter-spacing:.3px; }
+  .login-hero p{ font-size:13.5px; color:var(--ink-muted); margin:0; line-height:1.5; }
+
+  .roster-item{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background:var(--surface-raised); border-radius:var(--radius-sm); padding:12px 14px; margin-bottom:8px;
+    box-shadow:var(--shadow);
+  }
+  .roster-item .name{ font-size:14.5px; font-weight:600; }
+  .roster-item .weight{ font-size:12px; color:var(--ink-muted); }
+  .chev{ color:var(--ink-muted); font-size:16px; }
+
+  .legend{ display:flex; flex-wrap:wrap; margin-bottom:14px; font-size:11.5px; color:var(--ink-muted); }
+  .legend span{ display:flex; align-items:center; margin-right:12px; margin-bottom:4px; }
+  .legend i{ width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:5px; }
+
+  .att-row{ background:var(--surface-raised); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 14px; margin-bottom:10px; position:relative; overflow:hidden; }
+  .att-row::before{ content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--flag, var(--hairline)); transition:background .2s; }
+  .att-row .name{ font-weight:600; font-size:14.5px; margin-bottom:2px; }
+  .att-row .weight{ font-size:12px; color:var(--ink-muted); margin-bottom:10px; }
+  .stamp-grid{ display:flex; }
+  .stamp{
+    flex:1 1 0; margin-right:6px;
+    border:1.5px solid var(--hairline); background:var(--surface); border-radius:8px;
+    padding:8px 2px; font-size:10.5px; font-weight:600; text-align:center; cursor:pointer; color:var(--ink-muted);
+    line-height:1.15;
+  }
+  .stamp:last-child{ margin-right:0; }
+  .stamp.active{ color:#fff; border-color:transparent; }
+  .stamp[data-s="present"].active{ background:var(--present); }
+  .stamp[data-s="late"].active{ background:var(--late); }
+  .stamp[data-s="excused"].active{ background:var(--excused); }
+  .stamp[data-s="sick"].active{ background:var(--sick); }
+  .stamp[data-s="absent"].active{ background:var(--absent); }
+
+  .bottom-nav{
+    position:fixed; left:0; right:0; bottom:0; max-width:412px; margin:0 auto;
+    background:var(--surface-raised); border-top:1px solid var(--hairline);
+    display:flex; padding:8px 6px calc(8px + env(safe-area-inset-bottom));
+    z-index:6;
+  }
+  @media (max-width:479px){ .bottom-nav{ max-width:none; } }
+  .nav-btn{
+    flex:1; background:none; border:none; cursor:pointer; display:flex; flex-direction:column;
+    align-items:center; gap:3px; padding:6px 0; color:var(--ink-muted); font-size:11px; font-weight:600;
+  }
+  .nav-btn.active{ color:var(--red-dark); }
+  .nav-btn svg{ width:20px; height:20px; }
+
+  .toast{
+    position:fixed; left:16px; right:16px; bottom:78px; max-width:380px; margin:0 auto;
+    background:var(--ink); color:var(--surface); padding:12px 16px; border-radius:10px;
+    font-size:13.5px; box-shadow:var(--shadow); z-index:20; opacity:0; transform:translateY(8px);
+    transition:opacity .2s, transform .2s;
+  }
+  .toast.show{ opacity:1; transform:translateY(0); }
+
+  .empty{ text-align:center; padding:40px 16px; color:var(--ink-muted); }
+  .empty .flag-mini{ width:30px; height:30px; margin:0 auto 10px; background:var(--hairline); border-radius:8px; }
+</style>
+</head>
+<body>
+<div id="shell"></div>
+
+<script>
+/* =========================================================
+   DEMO-ДАННЫЕ (подмножество seed_data.sql, коуч user_id=6)
+   ========================================================= */
+const TODAY = '2026-06-25'; // зафиксировано для прототипа
+
+const COACH = { id:1, name:'Жумабеков Ерлан Канатович', phone:'+7 701 111 0001', section:'СШ №1, г. Семей' };
+
+const DISCIPLINE_LABEL = { freestyle:'Вольная борьба', greco_roman:'Греко-римская борьба', women_wrestling:'Женская борьба' };
+
+const GROUPS = [
+  { id:1, name:'Вольная борьба 11–13 (юноши)', discipline:'freestyle', ageCategory:'11–13', athletes:[1,2,3,4,5] },
+  { id:2, name:'Женская борьба 12–14', discipline:'women_wrestling', ageCategory:'12–14', athletes:[15,16,17,18,19,20] },
+];
+
+const ATHLETES = {
+  1:{name:'Сатпаев Алихан', weight:'34 кг'}, 2:{name:'Сатпаев Дамир', weight:'30 кг'},
+  3:{name:'Касымов Тимур', weight:'38 кг'}, 4:{name:'Касымов Алмас', weight:'28 кг'},
+  5:{name:'Омаров Санжар', weight:'34 кг'},
+  15:{name:'Игисинова Амина', weight:'38 кг'}, 16:{name:'Игисинова Алия', weight:'30 кг'},
+  17:{name:'Калиева Жанна', weight:'40 кг'}, 18:{name:'Калиева Сабина', weight:'32 кг'},
+  19:{name:'Сапарова Дильназ', weight:'36 кг'}, 20:{name:'Сапарова Айару', weight:'28 кг'},
+};
+
+const SESSIONS = [
+  { id:101, groupId:1, date:'2026-06-25', time:'17:00–19:00', status:'planned' },
+  { id:102, groupId:2, date:'2026-06-26', time:'17:00–19:00', status:'planned' },
+  { id:103, groupId:1, date:'2026-06-18', time:'17:00–19:00', status:'conducted' },
+  { id:104, groupId:2, date:'2026-06-19', time:'17:00–19:00', status:'conducted' },
+];
+
+const STATUS_META = {
+  present:{ label:'Был', short:'Был', color:'var(--present)' },
+  late:{ label:'Опоздал', short:'Опозд.', color:'var(--late)' },
+  excused:{ label:'Освобождён', short:'Освоб.', color:'var(--excused)' },
+  sick:{ label:'Болен', short:'Болен', color:'var(--sick)' },
+  absent:{ label:'Неявка', short:'Неявка', color:'var(--absent)' },
+};
+
+/* =========================================================
+   СОСТОЯНИЕ (только в памяти — см. примечание про localStorage
+   в сопроводительном README.md)
+   ========================================================= */
+const state = {
+  authed:false,
+  screen:'login',
+  groupId:null,
+  sessionId:null,
+  online:true,
+  pendingSync:0,
+  attendance:{}, // sessionId -> {athleteId: status}
+};
+
+function fmtDate(d){
+  const [y,m,day]=d.split('-');
+  const months=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+  return `${day} ${months[+m-1]}`;
+}
+
+/* =========================================================
+   РЕНДЕР
+   ========================================================= */
+function appBar(title, opts={}){
+  const back = opts.back ? `<button class="back-btn" onclick="${opts.back}" aria-label="Назад">‹</button>` : '';
+  const net = opts.hideNet ? '' : `<button class="net-pill ${state.online?'online':'offline'}" onclick="toggleOnline()">
+      <span class="net-dot"></span>${state.online?'онлайн':'офлайн'}${state.pendingSync?` · ${state.pendingSync}`:''}
+    </button>`;
+  return `<div class="app-bar">${back}<h1>${title}</h1>${net}</div>`;
+}
+
+function bottomNav(){
+  const item = (key,label,icon)=>`<button class="nav-btn ${state.screen===key?'active':''}" onclick="goTab('${key}')">${icon}<span>${label}</span></button>`;
+  return `<div class="bottom-nav">
+    ${item('dashboard','Дашборд','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>')}
+    ${item('groups','Группы','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3.3 2.5-5.5 5.5-5.5s5.5 2.2 5.5 5.5"/><circle cx="17" cy="8.5" r="2.4"/><path d="M15 14.6c2.6.3 4.5 2.2 4.5 5"/></svg>')}
+    ${item('profile','Профиль','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/></svg>')}
+  </div>`;
+}
+
+function screenLogin(){
+  return `
+  <div class="content" style="padding-bottom:24px;">
+    <div class="login-hero">
+      <div class="corner-mark"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="2" height="18" rx="1"/><polygon points="7,4 19,8 7,12"/></svg></div>
+      <h1>Digital Strong Abay</h1>
+      <p>Кабинет тренера · Федерация борьбы области Абай<br>Красный угол начинает первым — войдите, чтобы начать смену.</p>
+    </div>
+    <div class="field">
+      <label>Телефон</label>
+      <input id="loginPhone" type="tel" value="+7 701 111 0001">
+    </div>
+    <div class="field">
+      <label>Пароль</label>
+      <input id="loginPass" type="password" placeholder="••••••••" value="demo">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Войти</button>
+    <p style="text-align:center;font-size:12px;color:var(--ink-muted);margin-top:14px;">
+      Прототип: любой пароль подходит для демо-входа коуча Жумабекова Е.К.
+    </p>
+  </div>`;
+}
+
+function screenDashboard(){
+  const myGroups = GROUPS;
+  const athleteCount = myGroups.reduce((s,g)=>s+g.athletes.length,0);
+  const todaySessions = SESSIONS.filter(s=>s.date===TODAY);
+  return `
+  ${appBar('Сегодня')}
+  <div class="content">
+    <div class="stat-row">
+      <div class="stat"><div class="num">${myGroups.length}</div><div class="lbl">группы</div></div>
+      <div class="stat"><div class="num">${athleteCount}</div><div class="lbl">спортсмена</div></div>
+      <div class="stat"><div class="num">${todaySessions.length}</div><div class="lbl">занятий сегодня</div></div>
+    </div>
+
+    <div class="section-title">Занятия — ${fmtDate(TODAY)}</div>
+    ${todaySessions.length ? todaySessions.map(s=>{
+      const g = GROUPS.find(g=>g.id===s.groupId);
+      return `<div class="card flag-red" onclick="openSession(${s.id})" style="cursor:pointer">
+        <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · ${s.time}</p>
+        <h3>${g.name}</h3>
+        <p class="meta">${g.athletes.length} спортсменов в ростере · нажмите, чтобы отметить посещаемость</p>
+      </div>`;
+    }).join('') : `<div class="empty"><div class="flag-mini"></div>На сегодня занятий не запланировано</div>`}
+
+    <div class="section-title">Мои группы</div>
+    ${myGroups.map(g=>`
+      <div class="card flag-blue" onclick="openGroup(${g.id})" style="cursor:pointer">
+        <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · возраст ${g.ageCategory}</p>
+        <h3>${g.name}</h3>
+        <p class="meta">${g.athletes.length} спортсменов · ${COACH.section}</p>
+      </div>`).join('')}
+  </div>
+  ${bottomNav()}`;
+}
+
+function screenGroups(){
+  return `
+  ${appBar('Мои группы')}
+  <div class="content">
+    ${GROUPS.map(g=>`
+      <div class="card flag-blue" onclick="openGroup(${g.id})" style="cursor:pointer">
+        <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · возраст ${g.ageCategory}</p>
+        <h3>${g.name}</h3>
+        <p class="meta">${g.athletes.length} спортсменов · ${COACH.section}</p>
+      </div>`).join('')}
+  </div>
+  ${bottomNav()}`;
+}
+
+function screenGroupDetail(){
+  const g = GROUPS.find(g=>g.id===state.groupId);
+  const upcoming = SESSIONS.find(s=>s.groupId===g.id && s.status==='planned');
+  return `
+  ${appBar(g.name, {back:'goTab("groups")'})}
+  <div class="content">
+    <div class="card flag-gold">
+      <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · возраст ${g.ageCategory}</p>
+      <h3>${g.athletes.length} спортсменов в активном составе</h3>
+      <p class="meta">${COACH.section}</p>
+    </div>
+
+    ${upcoming ? `<button class="btn btn-primary" style="margin-bottom:18px" onclick="openSession(${upcoming.id})">
+      Отметить посещаемость · ${fmtDate(upcoming.date)}
+    </button>` : ''}
+
+    <div class="section-title">Состав группы</div>
+    ${g.athletes.map(id=>{
+      const a = ATHLETES[id];
+      return `<div class="roster-item">
+        <div><div class="name">${a.name}</div><div class="weight">${a.weight}</div></div>
+      </div>`;
+    }).join('')}
+  </div>
+  ${bottomNav()}`;
+}
+
+function screenAttendance(){
+  const s = SESSIONS.find(s=>s.id===state.sessionId);
+  const g = GROUPS.find(g=>g.id===s.groupId);
+  const draft = state.attendance[s.id] || {};
+  const order = ['present','late','excused','sick','absent'];
+
+  return `
+  ${appBar('Посещаемость', {back:`openGroup(${g.id})`})}
+  <div class="content">
+    <div class="card flag-red" style="margin-bottom:16px;">
+      <p class="eyebrow">${fmtDate(s.date)} · ${s.time}</p>
+      <h3>${g.name}</h3>
+      <p class="meta">Отметьте каждого спортсмена, затем сохраните занятие</p>
+    </div>
+
+    <div class="legend">
+      ${order.map(k=>`<span><i style="background:${STATUS_META[k].color}"></i>${STATUS_META[k].label}</span>`).join('')}
+    </div>
+
+    ${g.athletes.map(id=>{
+      const a = ATHLETES[id];
+      const cur = draft[id];
+      return `<div class="att-row" id="att-${id}" style="${cur?`--flag:${STATUS_META[cur].color}`:''}">
+        <div class="name">${a.name}</div>
+        <div class="weight">${a.weight}</div>
+        <div class="stamp-grid">
+          ${order.map(k=>`<div class="stamp ${cur===k?'active':''}" data-s="${k}" onclick="markAttendance(${s.id},${id},'${k}')">${STATUS_META[k].short}</div>`).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+
+    <button class="btn btn-primary" style="margin-top:8px" onclick="saveAttendance(${s.id})">
+      Сохранить посещаемость
+    </button>
+  </div>`;
+}
+
+function screenProfile(){
+  return `
+  ${appBar('Профиль', {hideNet:true})}
+  <div class="content">
+    <div class="card flag-gold">
+      <p class="eyebrow">Тренер · ${COACH.section}</p>
+      <h3>${COACH.name}</h3>
+      <p class="meta">${COACH.phone}</p>
+    </div>
+    <div class="section-title">О прототипе</div>
+    <div class="card flag-muted">
+      <p class="meta" style="line-height:1.6;">
+        Это рабочий PWA-прототип кабинета тренера Digital Strong Abay.<br>
+        Реальный backend (API, RLS, аудит) описан в Developer Implementation Pack v1.0 —
+        здесь данные и сохранение посещаемости симулируются локально, в памяти браузера.
+      </p>
+    </div>
+    <button class="btn btn-secondary" onclick="doLogout()">Выйти</button>
+  </div>
+  ${bottomNav()}`;
+}
+
+function render(){
+  const root = document.getElementById('shell');
+  if(!state.authed){ root.innerHTML = screenLogin(); return; }
+  if(state.screen==='dashboard')   root.innerHTML = screenDashboard();
+  else if(state.screen==='groups')      root.innerHTML = screenGroups();
+  else if(state.screen==='groupDetail') root.innerHTML = screenGroupDetail();
+  else if(state.screen==='attendance')  root.innerHTML = screenAttendance();
+  else if(state.screen==='profile')     root.innerHTML = screenProfile();
+}
+
+/* =========================================================
+   ДЕЙСТВИЯ
+   ========================================================= */
+function doLogin(){ state.authed=true; state.screen='dashboard'; render(); }
+function doLogout(){ state.authed=false; state.screen='login'; render(); }
+function goTab(tab){ state.screen=tab; render(); }
+function openGroup(id){ state.groupId=id; state.screen='groupDetail'; render(); }
+function openSession(id){ state.sessionId=id; state.screen='attendance'; render(); }
+
+function toggleOnline(){
+  state.online = !state.online;
+  if(state.online && state.pendingSync>0){
+    const n = state.pendingSync;
+    setTimeout(()=>{ state.pendingSync=0; render(); showToast(`Синхронизировано: ${n} занятие(й) отправлено на сервер`); }, 900);
+  }
+  render();
+}
+
+function markAttendance(sessionId, athleteId, status){
+  if(!state.attendance[sessionId]) state.attendance[sessionId] = {};
+  state.attendance[sessionId][athleteId] = status;
+  render();
+}
+
+function saveAttendance(sessionId){
+  const draft = state.attendance[sessionId] || {};
+  const g = GROUPS.find(g=>g.id===SESSIONS.find(s=>s.id===sessionId).groupId);
+  const marked = Object.keys(draft).length;
+  if(marked < g.athletes.length){
+    showToast(`Отмечено ${marked} из ${g.athletes.length} — отметьте всех перед сохранением`);
+    return;
+  }
+  if(state.online){
+    showToast(`Посещаемость сохранена · ${marked} из ${g.athletes.length} отмечено`);
+  } else {
+    state.pendingSync += 1;
+    showToast('Сохранено локально · синхронизируется при подключении к сети');
+  }
+  setTimeout(()=>openGroup(g.id), 650);
+}
+
+function showToast(msg){
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(()=>t.classList.add('show'));
+  setTimeout(()=>{ t.classList.remove('show'); setTimeout(()=>t.remove(),250); }, 2600);
+}
+
+/* =========================================================
+   PWA: регистрация service worker (см. service-worker.js)
+   ========================================================= */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./service-worker.js').catch(()=>{ /* офлайн-кеш недоступен в этом окружении — не блокирует прототип */ });
+  });
+}
+
+render();
+</script>
+</body>
+</html>
