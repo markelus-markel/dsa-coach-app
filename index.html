@@ -22,6 +22,7 @@
     --red-dark:#8C2622;
     --blue:#2C4A6E;
     --gold:#A9802E;
+    --teal:#3F7D72;
     --present:#4D6B4A;
     --late:#B8893B;
     --excused:#5C7A93;
@@ -161,6 +162,21 @@
   .legend span{ display:flex; align-items:center; margin-right:12px; margin-bottom:4px; }
   .legend i{ width:9px; height:9px; border-radius:50%; display:inline-block; margin-right:5px; }
 
+  .disc-badge{ display:inline-flex; padding:3px 9px; border-radius:999px; font-size:10.5px; font-weight:700; letter-spacing:.01em; }
+
+  .filter-row{ display:flex; flex-wrap:wrap; margin-bottom:14px; }
+  .filter-pill{
+    background:var(--surface-raised); border:1.5px solid var(--hairline); color:var(--ink-muted);
+    font-size:12px; font-weight:600; padding:7px 12px; border-radius:999px;
+    margin-right:8px; margin-bottom:8px; cursor:pointer;
+  }
+  .filter-pill.active{ background:var(--ink); color:var(--surface); border-color:var(--ink); }
+
+  .signal-row{ display:flex; align-items:flex-start; padding:10px 0; }
+  .signal-row + .signal-row{ border-top:1px solid var(--hairline); }
+  .signal-dot{ width:8px; height:8px; border-radius:50%; margin-top:4px; margin-right:10px; flex-shrink:0; }
+  .signal-text{ font-size:13px; line-height:1.4; }
+
   .att-row{ background:var(--surface-raised); border-radius:var(--radius); box-shadow:var(--shadow); padding:12px 14px; margin-bottom:10px; position:relative; overflow:hidden; }
   .att-row::before{ content:''; position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--flag, var(--hairline)); transition:background .2s; }
   .att-row .name{ font-weight:600; font-size:14.5px; margin-bottom:2px; }
@@ -204,6 +220,27 @@
 
   .empty{ text-align:center; padding:40px 16px; color:var(--ink-muted); }
   .empty .flag-mini{ width:30px; height:30px; margin:0 auto 10px; background:var(--hairline); border-radius:8px; }
+
+  .sheet-backdrop{
+    position:fixed; inset:0; background:rgba(20,16,12,.5); z-index:30;
+    opacity:0; transition:opacity .2s ease;
+  }
+  .sheet-backdrop.show{ opacity:1; }
+  .sheet{
+    position:fixed; left:0; right:0; bottom:0; max-width:412px; margin:0 auto;
+    background:var(--surface-raised); border-radius:20px 20px 0 0;
+    padding:18px 18px calc(20px + env(safe-area-inset-bottom));
+    z-index:31; max-height:78vh; overflow-y:auto;
+    transform:translateY(100%); transition:transform .25s ease;
+    box-shadow:0 -8px 30px rgba(0,0,0,.22);
+  }
+  .sheet.show{ transform:translateY(0); }
+  .sheet-handle{ width:36px; height:4px; background:var(--hairline); border-radius:999px; margin:0 auto 14px; }
+
+  .assist-tile{ flex:1; text-align:center; cursor:pointer; padding:16px 6px; }
+  .assist-tile svg{ width:21px; height:21px; margin:0 auto 7px; display:block; color:var(--ink-muted); }
+  .assist-tile .t{ font-size:12px; font-weight:600; }
+  .assist-tile .s{ font-size:10px; color:var(--ink-muted); margin-top:2px; letter-spacing:.04em; text-transform:uppercase; }
 </style>
 </head>
 <body>
@@ -211,26 +248,139 @@
 
 <script>
 /* =========================================================
-   DEMO-ДАННЫЕ (подмножество seed_data.sql, коуч user_id=6)
+   DEMO-ДАННЫЕ (подмножество seed_data.sql, 3 тренера = 3 секции)
    ========================================================= */
 const TODAY = '2026-06-25'; // зафиксировано для прототипа
 
-const COACH = { id:1, name:'Жумабеков Ерлан Канатович', phone:'+7 701 111 0001', section:'СШ №1, г. Семей' };
+const COACHES = [
+  { id:1, name:'Жумабеков Ерлан Канатович', phone:'+7 701 111 0001', section:'СШ №1, г. Семей' },
+  { id:2, name:'Ахметов Дамир Серикович',   phone:'+7 701 111 0002', section:'СШ №2, г. Аягоз' },
+  { id:3, name:'Турсунова Айгуль Касымовна', phone:'+7 701 111 0003', section:'СШ №3, г. Шар' },
+];
+/* ---------------------------------------------------------
+   Канонический порядок дисциплин для ВСЕХ списков, фильтров и счётчиков:
+   1. Греко-римская  2. Вольная  3. Женская — НЕ алфавит и не порядок
+   добавления в БД, а порядок, в котором Федерация описывает разделы.
+   sortByDiscipline — единая точка применения, чтобы порядок не зависел
+   от того, в каком порядке группы лежат в источнике данных.
+   --------------------------------------------------------- */
+const DISCIPLINE_ORDER = ['greco_roman', 'freestyle', 'women_wrestling'];
+function sortByDiscipline(groups){
+  return [...groups].sort((a,b)=>DISCIPLINE_ORDER.indexOf(a.competition_discipline) - DISCIPLINE_ORDER.indexOf(b.competition_discipline));
+}
+function currentCoach(){ return COACHES.find(c=>c.id===state.coachId) || COACHES[0]; }
+function myGroups(){ return sortByDiscipline(GROUPS.filter(g=>g.coachId===state.coachId)); }
+function myGroupsOf(coachId){ return sortByDiscipline(GROUPS.filter(g=>g.coachId===coachId)); }
 
-const DISCIPLINE_LABEL = { freestyle:'Вольная борьба', greco_roman:'Греко-римская борьба', women_wrestling:'Женская борьба' };
+/* ---------------------------------------------------------
+   Словари — дисциплина / правила / гендерный дивизион / программа.
+   Намеренно 4 отдельных измерения, а не одно "discipline":
+   competition_discipline и rule_family расходятся для женской
+   борьбы (правила те же, что у freestyle, но дисциплина — своя),
+   а program_stream — это не дисциплина и не правила, а трек
+   развития спортсмена внутри Федерации.
+
+   women_wrestling сознательно поддерживает ДВЕ rule_family:
+   - freestyle_rules — основной соревновательный вариант (массовый набор);
+   - greco_roman_rules — опциональная/локальная группа, если секция
+     реально ведёт такую подготовку (см. group id:5 ниже — это не
+     гипотетический кейс в комментарии, а реальная mock-группа,
+     которая рендерится и фильтруется как обычная женская группа).
+   --------------------------------------------------------- */
+const DISCIPLINE_LABEL = {
+  greco_roman:'Греко-римская борьба',
+  freestyle:'Вольная борьба',
+  women_wrestling:'Женская борьба / Қыздар күресі',
+};
+const RULE_FAMILY_LABEL = { greco_roman_rules:'Правила греко-римской борьбы', freestyle_rules:'Правила вольной борьбы' };
+const GENDER_DIVISION_LABEL = { male:'Юноши', female:'Девушки', mixed_youth:'Смешанная группа' };
+const PROGRAM_STREAM_LABEL = {
+  mass:'Массовый спорт', reserve:'Спортивный резерв', regional_team:'Сборная области',
+  women_development:'Қыздар күресі · программа развития',
+};
+
+// Акценты дисциплин: греко-римская = steel-blue, вольная = красный
+// (существующий бренд-цвет), женская борьба = отдельный teal —
+// сознательно НЕ переиспользуем gold (он уже занят как генерик-акцент
+// профиля/карточек), чтобы женская борьба не выглядела как "ещё один оттенок",
+// а читалась как самостоятельный контур. Цвет идёт за competition_discipline,
+// а не за rule_family — локальная женская греко-группа (id:5) всё равно teal,
+// а не синяя, потому что для Федерации это женская борьба, а не греко-римская.
+const DISCIPLINE_COLORS = {
+  greco_roman:     { hex:'#2C4A6E', tint:'rgba(44,74,110,.12)',  cssVar:'var(--blue)' },
+  freestyle:       { hex:'#B6332E', tint:'rgba(182,51,46,.12)',  cssVar:'var(--red)'  },
+  women_wrestling: { hex:'#3F7D72', tint:'rgba(63,125,114,.14)', cssVar:'var(--teal)' },
+};
+
+function getDisciplineAccent(group){ return DISCIPLINE_COLORS[group.competition_discipline].cssVar; }
+function getDisciplineBadge(group){
+  const c = DISCIPLINE_COLORS[group.competition_discipline];
+  return `<span class="disc-badge" style="background:${c.tint};color:${c.hex}">${DISCIPLINE_LABEL[group.competition_discipline]}</span>`;
+}
+// "Ведущая метрика" карточки группы — у каждой дисциплины разный приоритет
+// сигнала: женская борьба ведёт с согласиями (доверие родителей важнее процента
+// посещаемости на этом этапе), резерв/сборная ведёт с турниром, массовый спорт —
+// с посещаемостью. Иерархия специально захардкожена здесь, а не "вообще все метрики
+// одной строкой", чтобы карточка не превращалась в дашборд.
+function getDisciplineMeta(group){
+  if(group.competition_discipline === 'women_wrestling'){
+    const missing = group.athletes.filter(id=>ATHLETES[id].consentStatus==='missing').length;
+    return missing>0 ? `${missing} без согласия родителя` : 'все согласия активны';
+  }
+  if(group.nextTournamentInDays != null) return `1 турнир через ${group.nextTournamentInDays} дней`;
+  if(group.mockAttendanceRate != null) return `посещаемость ${group.mockAttendanceRate}%`;
+  return '';
+}
+function weightRangeOf(group){
+  const ws = group.athletes.map(id=>ATHLETES[id].currentWeight);
+  return `${Math.min(...ws)}–${Math.max(...ws)} кг`;
+}
+function athleteNoun(group){ return group.gender_division==='female' ? 'спортсменок' : 'спортсменов'; }
 
 const GROUPS = [
-  { id:1, name:'Вольная борьба 11–13 (юноши)', discipline:'freestyle', ageCategory:'11–13', athletes:[1,2,3,4,5] },
-  { id:2, name:'Женская борьба 12–14', discipline:'women_wrestling', ageCategory:'12–14', athletes:[15,16,17,18,19,20] },
+  // 1. Греко-римская борьба — базовый раздел
+  { id:3, coachId:2, name:'Греко-римская борьба 13–15', ageCategory:'13–15',
+    competition_discipline:'greco_roman', rule_family:'greco_roman_rules', gender_division:'male', program_stream:'reserve',
+    nextTournamentInDays:12, athletes:[8,9,10,11,12,13,14] },
+  // 2. Вольная борьба — базовый раздел
+  { id:1, coachId:1, name:'Вольная борьба 11–13 (юноши)', ageCategory:'11–13',
+    competition_discipline:'freestyle', rule_family:'freestyle_rules', gender_division:'male', program_stream:'mass',
+    mockAttendanceRate:82, athletes:[1,2,3,4,5] },
+  { id:4, coachId:3, name:'Вольная борьба 10–12 (начальная)', ageCategory:'10–12',
+    competition_discipline:'freestyle', rule_family:'freestyle_rules', gender_division:'male', program_stream:'mass',
+    mockAttendanceRate:90, athletes:[6,7] },
+  // 3. Женская борьба — отдельный программный контур (две rule_family: основная freestyle и опциональная greco)
+  { id:2, coachId:1, name:'Женская борьба 12–14', ageCategory:'12–14',
+    competition_discipline:'women_wrestling', rule_family:'freestyle_rules', gender_division:'female', program_stream:'women_development',
+    athletes:[15,16,17,18,19,20] },
+  { id:5, coachId:2, name:'Женская борьба 13–15 (греко-стиль)', ageCategory:'13–15',
+    competition_discipline:'women_wrestling', rule_family:'greco_roman_rules', gender_division:'female', program_stream:'women_development',
+    athletes:[21,22] },
 ];
 
 const ATHLETES = {
-  1:{name:'Сатпаев Алихан', weight:'34 кг'}, 2:{name:'Сатпаев Дамир', weight:'30 кг'},
-  3:{name:'Касымов Тимур', weight:'38 кг'}, 4:{name:'Касымов Алмас', weight:'28 кг'},
-  5:{name:'Омаров Санжар', weight:'34 кг'},
-  15:{name:'Игисинова Амина', weight:'38 кг'}, 16:{name:'Игисинова Алия', weight:'30 кг'},
-  17:{name:'Калиева Жанна', weight:'40 кг'}, 18:{name:'Калиева Сабина', weight:'32 кг'},
-  19:{name:'Сапарова Дильназ', weight:'36 кг'}, 20:{name:'Сапарова Айару', weight:'28 кг'},
+  1:{name:'Сатпаев Алихан', gender:'male', birthYear:2014, currentWeight:34, consentStatus:'active', status:'mass'},
+  2:{name:'Сатпаев Дамир', gender:'male', birthYear:2015, currentWeight:30, consentStatus:'active', status:'mass'},
+  3:{name:'Касымов Тимур', gender:'male', birthYear:2013, currentWeight:38, consentStatus:'active', status:'mass'},
+  4:{name:'Касымов Алмас', gender:'male', birthYear:2016, currentWeight:28, consentStatus:'active', status:'mass'},
+  5:{name:'Омаров Санжар', gender:'male', birthYear:2014, currentWeight:34, consentStatus:'active', status:'mass'},
+  6:{name:'Омаров Дос', gender:'male', birthYear:2015, currentWeight:30, consentStatus:'active', status:'mass'},
+  7:{name:'Бектасов Жанибек', gender:'male', birthYear:2014, currentWeight:36, consentStatus:'active', status:'mass'},
+  8:{name:'Бектасов Алдияр', gender:'male', birthYear:2016, currentWeight:42, consentStatus:'active', status:'reserve'},
+  9:{name:'Жакупов Бекзат', gender:'male', birthYear:2013, currentWeight:46, consentStatus:'active', status:'regional_team_candidate'},
+  10:{name:'Жакупов Нурсултан', gender:'male', birthYear:2015, currentWeight:38, consentStatus:'active', status:'reserve'},
+  11:{name:'Сериков Алмат', gender:'male', birthYear:2014, currentWeight:42, consentStatus:'active', status:'reserve'},
+  12:{name:'Сериков Ерасыл', gender:'male', birthYear:2016, currentWeight:34, consentStatus:'active', status:'mass'},
+  13:{name:'Тлеуберди Дамир', gender:'male', birthYear:2013, currentWeight:46, consentStatus:'active', status:'reserve'},
+  14:{name:'Тлеуберди Алихан', gender:'male', birthYear:2015, currentWeight:38, consentStatus:'active', status:'mass'},
+  15:{name:'Игисинова Амина', gender:'female', birthYear:2014, currentWeight:38, consentStatus:'active', status:'reserve'},
+  16:{name:'Игисинова Алия', gender:'female', birthYear:2016, currentWeight:30, consentStatus:'active', status:'mass'},
+  17:{name:'Калиева Жанна', gender:'female', birthYear:2013, currentWeight:40, consentStatus:'missing', status:'mass'},
+  18:{name:'Калиева Сабина', gender:'female', birthYear:2015, currentWeight:32, consentStatus:'active', status:'mass'},
+  19:{name:'Сапарова Дильназ', gender:'female', birthYear:2014, currentWeight:36, consentStatus:'missing', status:'mass'},
+  20:{name:'Сапарова Айару', gender:'female', birthYear:2016, currentWeight:28, consentStatus:'active', status:'mass'},
+  21:{name:'Нурланова Сезим', gender:'female', birthYear:2012, currentWeight:50, consentStatus:'active', status:'mass'},
+  22:{name:'Әбілова Алтынай', gender:'female', birthYear:2013, currentWeight:54, consentStatus:'active', status:'mass'},
 };
 
 const SESSIONS = [
@@ -238,7 +388,55 @@ const SESSIONS = [
   { id:102, groupId:2, date:'2026-06-26', time:'17:00–19:00', status:'planned' },
   { id:103, groupId:1, date:'2026-06-18', time:'17:00–19:00', status:'conducted' },
   { id:104, groupId:2, date:'2026-06-19', time:'17:00–19:00', status:'conducted' },
+  { id:105, groupId:3, date:'2026-06-25', time:'18:00–20:00', status:'planned' },
+  { id:106, groupId:3, date:'2026-06-18', time:'18:00–20:00', status:'conducted' },
+  { id:107, groupId:4, date:'2026-06-25', time:'16:00–17:30', status:'planned' },
+  { id:108, groupId:4, date:'2026-06-19', time:'16:00–17:30', status:'conducted' },
+  { id:109, groupId:5, date:'2026-06-27', time:'15:00–16:30', status:'planned' },
 ];
+
+/* ---------------------------------------------------------
+   "Сигналы по дисциплинам" на дашборде тренера — по одному
+   приоритетному сигналу на группу (consent-гэп > турнир > сегодняшняя
+   тренировка > посещаемость). Computed из тех же mock-полей, что
+   видны в карточках — не отдельный источник правды.
+
+   Project Office relevance (не строим отдельный дашборд сейчас,
+   но именно эта дифференциация — competition_discipline / gender_division /
+   program_stream / consentStatus — это ровно тот набор измерений,
+   по которому Федерация в MVP-2 сможет агрегированно считать:
+   сколько спортсменов по дисциплинам, сколько девочек в женской борьбе,
+   где растёт греко-римская/вольная, где не хватает тренеров,
+   где проблемы с согласиями родителей, где формируется резерв/сборная.
+   Это ровно Section_KPI_Snapshot / Women_Wrestling_Statistics_Snapshot
+   из Architecture Baseline v0.9 — здесь они просто еще не материализованы.) */
+function getKeySignalForGroup(g){
+  if(g.competition_discipline==='women_wrestling'){
+    const missing = g.athletes.filter(id=>ATHLETES[id].consentStatus==='missing').length;
+    if(missing>0) return { accent:getDisciplineAccent(g), text:`${DISCIPLINE_LABEL[g.competition_discipline]}: ${missing} спортсменки без согласия родителя` };
+  }
+  if(g.nextTournamentInDays!=null){
+    return { accent:getDisciplineAccent(g), text:`${DISCIPLINE_LABEL[g.competition_discipline]}: ближайший турнир через ${g.nextTournamentInDays} дней` };
+  }
+  const todayCount = SESSIONS.filter(s=>s.groupId===g.id && s.date===TODAY).length;
+  if(todayCount>0){
+    return { accent:getDisciplineAccent(g), text:`${DISCIPLINE_LABEL[g.competition_discipline]}: сегодня ${todayCount} тренировка` };
+  }
+  if(g.mockAttendanceRate!=null){
+    return { accent:getDisciplineAccent(g), text:`${DISCIPLINE_LABEL[g.competition_discipline]}: посещаемость ${g.mockAttendanceRate}%` };
+  }
+  return null;
+}
+function disciplineSignals(groups){ return groups.map(getKeySignalForGroup).filter(Boolean); }
+
+function groupCardHTML(g, coach){
+  return `<div class="card" style="--flag:${getDisciplineAccent(g)};cursor:pointer" onclick="openGroup(${g.id})">
+    ${getDisciplineBadge(g)}
+    <h3 style="margin-top:8px">${g.name}</h3>
+    <p class="meta">${GENDER_DIVISION_LABEL[g.gender_division]} ${g.ageCategory} · ${weightRangeOf(g)} · ${coach.section}</p>
+    <p class="meta" style="margin-top:4px;font-weight:600;color:var(--ink)">${g.athletes.length} ${athleteNoun(g)} · ${getDisciplineMeta(g)}</p>
+  </div>`;
+}
 
 const STATUS_META = {
   present:{ label:'Был', short:'Был', color:'var(--present)' },
@@ -254,7 +452,10 @@ const STATUS_META = {
    ========================================================= */
 const state = {
   authed:false,
-  screen:'login',
+  screen:'landing',
+  coachId:null,
+  loginSelectedCoach:1,
+  groupFilter:'all',
   groupId:null,
   sessionId:null,
   online:true,
@@ -288,17 +489,173 @@ function bottomNav(){
   </div>`;
 }
 
+/* ---------------------------------------------------------
+   Bottom-sheet оверлей — единый механизм для меню, карточек дисциплин
+   и честных "скоро" заглушек voice/AI-ассистента. Контент-генераторы
+   ниже возвращают только внутренний HTML; рамку (handle + крестик)
+   достраивает openSheet().
+   --------------------------------------------------------- */
+function openSheet(innerHtml){
+  closeSheet();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  backdrop.id = 'sheetBackdrop';
+  backdrop.onclick = closeSheet;
+  const sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.id = 'sheetPanel';
+  sheet.onclick = (e)=>e.stopPropagation();
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <button class="back-btn" style="position:absolute;top:8px;right:10px;font-size:22px;" onclick="closeSheet()" aria-label="Закрыть">×</button>
+    ${innerHtml}
+  `;
+  document.body.appendChild(backdrop);
+  document.body.appendChild(sheet);
+  requestAnimationFrame(()=>{ backdrop.classList.add('show'); sheet.classList.add('show'); });
+}
+function closeSheet(){
+  const b = document.getElementById('sheetBackdrop'), s = document.getElementById('sheetPanel');
+  if(b){ b.classList.remove('show'); setTimeout(()=>b.remove(),200); }
+  if(s){ s.classList.remove('show'); setTimeout(()=>s.remove(),200); }
+}
+
+function disciplineSheetHTML(key){
+  const groups = GROUPS.filter(g=>g.competition_discipline===key);
+  const athleteCount = groups.reduce((s,g)=>s+g.athletes.length,0);
+  const sectionsSet = [...new Set(groups.map(g=>COACHES.find(c=>c.id===g.coachId).section))];
+  const c = DISCIPLINE_COLORS[key];
+  const copy = {
+    greco_roman: 'Классическая школа борьбы: работа корпусом, броски, высокая дисциплина. Базовый раздел Федерации — преимущественно юношеские группы и спортивный резерв.',
+    freestyle: 'Динамика, проходы в ноги, мобильность. Второй базовый раздел и самая массовая база Федерации — отсюда приходит основной резерв.',
+    women_wrestling: 'Отдельный программный контур, а не «вольная борьба для девочек»: набор, удержание, безопасная среда, родительское доверие, собственные тренеры и турниры.',
+  }[key];
+  return `
+    <span class="disc-badge" style="background:${c.tint};color:${c.hex}">${DISCIPLINE_LABEL[key]}</span>
+    <h3 style="font-family:var(--font-display);font-size:19px;margin:10px 0 6px;">${DISCIPLINE_LABEL[key]}</h3>
+    <p style="font-size:14px;line-height:1.55;color:var(--ink-muted);margin:0 0 14px;">${copy}</p>
+    <div class="stat-row">
+      <div class="stat"><div class="num">${groups.length}</div><div class="lbl">групп</div></div>
+      <div class="stat"><div class="num">${athleteCount}</div><div class="lbl">${key==='women_wrestling'?'спортсменок':'спортсменов'}</div></div>
+      <div class="stat"><div class="num">${sectionsSet.length}</div><div class="lbl">секции</div></div>
+    </div>
+    <button class="btn btn-primary" style="margin-top:6px" onclick="closeSheet();goLoginFor('${key}')">Войти как тренер этого направления</button>
+  `;
+}
+
+function comingSoonSheetHTML(title, body){
+  return `
+    <h3 style="font-family:var(--font-display);font-size:19px;margin:0 0 8px;">${title}</h3>
+    <p style="font-size:14px;line-height:1.55;color:var(--ink-muted);margin:0 0 14px;">${body}</p>
+    <span class="disc-badge" style="background:rgba(169,128,46,.16);color:var(--gold)">Скоро · в разработке</span>
+  `;
+}
+
+function menuSheetHTML(){
+  const item = (label, body) => `<div class="roster-item" style="cursor:pointer" onclick="closeSheet();openSheet(comingSoonSheetHTML('${label}', '${body}'))"><div class="name">${label}</div><span class="chev">›</span></div>`;
+  return `
+    <h3 style="font-family:var(--font-display);font-size:19px;margin:0 0 12px;">Меню</h3>
+    ${item('О Федерации', 'Структура, руководство и контакты Федерации греко-римской, вольной и женской борьбы области Абай.')}
+    ${item('Турнирный календарь', 'Публичный календарь турниров области и расписание по секциям.')}
+    ${item('Контакты', 'Адреса секций и контакты проектного офиса Федерации.')}
+    <button class="btn btn-primary" style="margin-top:14px" onclick="closeSheet();goTab('login')">Войти</button>
+  `;
+}
+
+function landingDisciplineCard(key){
+  const groups = GROUPS.filter(g=>g.competition_discipline===key);
+  const athleteCount = groups.reduce((s,g)=>s+g.athletes.length,0);
+  const c = DISCIPLINE_COLORS[key];
+  return `<div class="card" style="--flag:${c.cssVar};cursor:pointer" onclick="openSheet(disciplineSheetHTML('${key}'))">
+    <span class="disc-badge" style="background:${c.tint};color:${c.hex}">${DISCIPLINE_LABEL[key]}</span>
+    <p class="meta" style="margin-top:8px;font-weight:600;color:var(--ink)">${groups.length} групп · ${athleteCount} ${key==='women_wrestling'?'спортсменок':'спортсменов'}</p>
+  </div>`;
+}
+
+function landingBottomNav(){
+  return `<div class="bottom-nav">
+    <button class="nav-btn active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11l8-7 8 7"/><path d="M6 10v9h12v-9"/></svg>
+      <span>Главная</span>
+    </button>
+    <button class="nav-btn" onclick="document.getElementById('disc-section').scrollIntoView({behavior:'smooth'})">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+      <span>Дисциплины</span>
+    </button>
+    <button class="nav-btn" onclick="openSheet(comingSoonSheetHTML('Турнирный календарь','Публичный календарь турниров появится в следующей версии.'))">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3h8v4a4 4 0 01-8 0V3z"/><path d="M12 11v4M9 19h6M10 15h4v4h-4z"/></svg>
+      <span>Турниры</span>
+    </button>
+    <button class="nav-btn" onclick="goTab('login')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4v18h-4"/><path d="M10 12h9M16 8l4 4-4 4"/></svg>
+      <span>Войти</span>
+    </button>
+  </div>`;
+}
+
+function screenLanding(){
+  return `
+  <div class="app-bar">
+    <button class="back-btn" onclick="openSheet(menuSheetHTML())" aria-label="Меню">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <h1>Digital Strong Abay</h1>
+  </div>
+  <div class="content">
+    <div class="login-hero" style="padding-top:24px;">
+      <div class="corner-mark"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="2" height="18" rx="1"/><polygon points="7,4 19,8 7,12"/></svg></div>
+      <h1>Digital Strong Abay</h1>
+      <p>Федерация греко-римской, вольной и женской борьбы области Абай<br>Для тренеров, спортсменов, родителей и судей.</p>
+    </div>
+
+    <button class="btn btn-primary" onclick="goTab('login')">Войти</button>
+
+    <div class="section-title" id="disc-section">Направления борьбы</div>
+    ${DISCIPLINE_ORDER.map(key=>landingDisciplineCard(key)).join('')}
+
+    <div class="section-title">Помощники</div>
+    <div style="display:flex;">
+      <div class="card assist-tile" style="margin-right:8px;" onclick="openSheet(comingSoonSheetHTML('Голосовой помощник','Голосовая отметка посещаемости и быстрые команды для тренера в зале, когда руки заняты. Требует реальной speech-to-text интеграции — не симулируем фейковое распознавание.'))">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+        <div class="t">Голосовой помощник</div>
+        <div class="s">скоро</div>
+      </div>
+      <div class="card assist-tile" onclick="openSheet(comingSoonSheetHTML('ИИ-ассистент','Подсказки тренеру по нагрузке группы, авто-черновики прогресс-заметок, ответы родителям на типовые вопросы. Требует реальной LLM-интеграции с бэкендом Федерации.'))">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>
+        <div class="t">ИИ-ассистент</div>
+        <div class="s">скоро</div>
+      </div>
+    </div>
+  </div>
+  ${landingBottomNav()}`;
+}
+
 function screenLogin(){
+  const sel = COACHES.find(c=>c.id===state.loginSelectedCoach);
   return `
   <div class="content" style="padding-bottom:24px;">
-    <div class="login-hero">
+    <button class="back-btn" style="margin-bottom:4px;" onclick="goLanding()" aria-label="На главную">‹</button>
+    <div class="login-hero" style="padding-top:18px;">
       <div class="corner-mark"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="2" height="18" rx="1"/><polygon points="7,4 19,8 7,12"/></svg></div>
       <h1>Digital Strong Abay</h1>
       <p>Кабинет тренера · Федерация борьбы области Абай<br>Красный угол начинает первым — войдите, чтобы начать смену.</p>
     </div>
+
+    <div class="field">
+      <label>Демо-вход как тренер</label>
+      ${COACHES.map(c=>`
+        <div class="roster-item" style="cursor:pointer; ${c.id===sel.id?'border:1.5px solid var(--red); box-shadow:none;':''}" onclick="selectDemoCoach(${c.id})">
+          <div>
+            <div class="name">${c.name}</div>
+            <div class="weight">${c.section} · ${myGroupsOf(c.id).map(g=>DISCIPLINE_LABEL[g.competition_discipline]).join(', ')}</div>
+          </div>
+          ${c.id===sel.id?'<span class="chev" style="color:var(--red)">✓</span>':''}
+        </div>`).join('')}
+    </div>
+
     <div class="field">
       <label>Телефон</label>
-      <input id="loginPhone" type="tel" value="+7 701 111 0001">
+      <input id="loginPhone" type="tel" value="${sel.phone}">
     </div>
     <div class="field">
       <label>Пароль</label>
@@ -306,70 +663,100 @@ function screenLogin(){
     </div>
     <button class="btn btn-primary" onclick="doLogin()">Войти</button>
     <p style="text-align:center;font-size:12px;color:var(--ink-muted);margin-top:14px;">
-      Прототип: любой пароль подходит для демо-входа коуча Жумабекова Е.К.
+      Прототип: любой пароль подходит. Выбор тренера выше — только для демо;
+      в реальном приложении он определяется логином и RBAC, а не кнопкой.
     </p>
   </div>`;
 }
 
 function screenDashboard(){
-  const myGroups = GROUPS;
-  const athleteCount = myGroups.reduce((s,g)=>s+g.athletes.length,0);
-  const todaySessions = SESSIONS.filter(s=>s.date===TODAY);
+  const coach = currentCoach();
+  const groups = myGroups();
+  const athleteCount = groups.reduce((s,g)=>s+g.athletes.length,0);
+  const groupIds = groups.map(g=>g.id);
+  const todaySessions = SESSIONS.filter(s=>s.date===TODAY && groupIds.includes(s.groupId));
+  const signals = disciplineSignals(groups);
   return `
   ${appBar('Сегодня')}
   <div class="content">
     <div class="stat-row">
-      <div class="stat"><div class="num">${myGroups.length}</div><div class="lbl">группы</div></div>
+      <div class="stat"><div class="num">${groups.length}</div><div class="lbl">группы</div></div>
       <div class="stat"><div class="num">${athleteCount}</div><div class="lbl">спортсмена</div></div>
       <div class="stat"><div class="num">${todaySessions.length}</div><div class="lbl">занятий сегодня</div></div>
     </div>
 
+    ${signals.length ? `
+    <div class="section-title">Сигналы по дисциплинам</div>
+    <div class="card flag-muted">
+      ${signals.map(sig=>`<div class="signal-row">
+        <span class="signal-dot" style="background:${sig.accent}"></span>
+        <span class="signal-text">${sig.text}</span>
+      </div>`).join('')}
+    </div>` : ''}
+
     <div class="section-title">Занятия — ${fmtDate(TODAY)}</div>
     ${todaySessions.length ? todaySessions.map(s=>{
-      const g = GROUPS.find(g=>g.id===s.groupId);
-      return `<div class="card flag-red" onclick="openSession(${s.id})" style="cursor:pointer">
-        <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · ${s.time}</p>
-        <h3>${g.name}</h3>
-        <p class="meta">${g.athletes.length} спортсменов в ростере · нажмите, чтобы отметить посещаемость</p>
+      const g = groups.find(g=>g.id===s.groupId);
+      return `<div class="card" style="--flag:${getDisciplineAccent(g)};cursor:pointer" onclick="openSession(${s.id})">
+        ${getDisciplineBadge(g)}
+        <h3 style="margin-top:8px">${g.name}</h3>
+        <p class="meta">${s.time} · ${g.athletes.length} ${athleteNoun(g)} в ростере · нажмите, чтобы отметить посещаемость</p>
       </div>`;
     }).join('') : `<div class="empty"><div class="flag-mini"></div>На сегодня занятий не запланировано</div>`}
 
     <div class="section-title">Мои группы</div>
-    ${myGroups.map(g=>`
-      <div class="card flag-blue" onclick="openGroup(${g.id})" style="cursor:pointer">
-        <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · возраст ${g.ageCategory}</p>
-        <h3>${g.name}</h3>
-        <p class="meta">${g.athletes.length} спортсменов · ${COACH.section}</p>
-      </div>`).join('')}
+    ${groups.map(g=>groupCardHTML(g, coach)).join('')}
   </div>
   ${bottomNav()}`;
 }
 
 function screenGroups(){
+  const coach = currentCoach();
+  const all = myGroups();
+  const counts = {
+    all: all.length,
+    greco_roman: all.filter(g=>g.competition_discipline==='greco_roman').length,
+    freestyle: all.filter(g=>g.competition_discipline==='freestyle').length,
+    women_wrestling: all.filter(g=>g.competition_discipline==='women_wrestling').length,
+  };
+  const filterDefs = [
+    {key:'all', label:'Все'},
+    {key:'greco_roman', label:'Греко-римская'},
+    {key:'freestyle', label:'Вольная'},
+    {key:'women_wrestling', label:'Женская'},
+  ];
+  const filtered = state.groupFilter==='all' ? all : all.filter(g=>g.competition_discipline===state.groupFilter);
   return `
   ${appBar('Мои группы')}
   <div class="content">
-    ${GROUPS.map(g=>`
-      <div class="card flag-blue" onclick="openGroup(${g.id})" style="cursor:pointer">
-        <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · возраст ${g.ageCategory}</p>
-        <h3>${g.name}</h3>
-        <p class="meta">${g.athletes.length} спортсменов · ${COACH.section}</p>
-      </div>`).join('')}
+    <div class="filter-row">
+      ${filterDefs.map(f=>`<button class="filter-pill ${state.groupFilter===f.key?'active':''}" onclick="setGroupFilter('${f.key}')">${f.label} · ${counts[f.key]}</button>`).join('')}
+    </div>
+    ${filtered.length ? filtered.map(g=>groupCardHTML(g, coach)).join('') : `<div class="empty"><div class="flag-mini"></div>Нет групп в этой категории</div>`}
   </div>
   ${bottomNav()}`;
 }
 
 function screenGroupDetail(){
+  const coach = currentCoach();
   const g = GROUPS.find(g=>g.id===state.groupId);
   const upcoming = SESSIONS.find(s=>s.groupId===g.id && s.status==='planned');
+  const accent = getDisciplineAccent(g);
   return `
   ${appBar(g.name, {back:'goTab("groups")'})}
   <div class="content">
-    <div class="card flag-gold">
-      <p class="eyebrow">${DISCIPLINE_LABEL[g.discipline]} · возраст ${g.ageCategory}</p>
-      <h3>${g.athletes.length} спортсменов в активном составе</h3>
-      <p class="meta">${COACH.section}</p>
+    <div class="card" style="--flag:${accent}">
+      ${getDisciplineBadge(g)}
+      <h3 style="margin-top:8px">${GENDER_DIVISION_LABEL[g.gender_division]} ${g.ageCategory} · ${weightRangeOf(g)}</h3>
+      <p class="meta">${RULE_FAMILY_LABEL[g.rule_family]} · ${PROGRAM_STREAM_LABEL[g.program_stream]}</p>
+      <p class="meta" style="margin-top:6px">${coach.section} · ${g.athletes.length} ${athleteNoun(g)} · ${getDisciplineMeta(g)}</p>
     </div>
+
+    ${g.competition_discipline==='women_wrestling' ? `
+    <div class="card" style="--flag:var(--teal)">
+      <p class="eyebrow">Контур развития</p>
+      <p class="meta" style="line-height:1.55">Отдельный контур развития женской борьбы: набор, удержание, безопасные условия, родительское доверие.</p>
+    </div>` : ''}
 
     ${upcoming ? `<button class="btn btn-primary" style="margin-bottom:18px" onclick="openSession(${upcoming.id})">
       Отметить посещаемость · ${fmtDate(upcoming.date)}
@@ -379,7 +766,10 @@ function screenGroupDetail(){
     ${g.athletes.map(id=>{
       const a = ATHLETES[id];
       return `<div class="roster-item">
-        <div><div class="name">${a.name}</div><div class="weight">${a.weight}</div></div>
+        <div>
+          <div class="name">${a.name}</div>
+          <div class="weight">${a.currentWeight} кг${a.consentStatus==='missing'?' · <span style="color:var(--red);font-weight:600">нет согласия родителя</span>':''}</div>
+        </div>
       </div>`;
     }).join('')}
   </div>
@@ -391,14 +781,16 @@ function screenAttendance(){
   const g = GROUPS.find(g=>g.id===s.groupId);
   const draft = state.attendance[s.id] || {};
   const order = ['present','late','excused','sick','absent'];
+  const accent = getDisciplineAccent(g);
 
   return `
   ${appBar('Посещаемость', {back:`openGroup(${g.id})`})}
   <div class="content">
-    <div class="card flag-red" style="margin-bottom:16px;">
-      <p class="eyebrow">${fmtDate(s.date)} · ${s.time}</p>
+    <div class="card" style="--flag:${accent};margin-bottom:16px;">
+      ${getDisciplineBadge(g)}
+      <p class="eyebrow" style="margin-top:8px">${fmtDate(s.date)} · ${s.time}</p>
       <h3>${g.name}</h3>
-      <p class="meta">Отметьте каждого спортсмена, затем сохраните занятие</p>
+      <p class="meta">${GENDER_DIVISION_LABEL[g.gender_division]} ${g.ageCategory} · отметьте каждого спортсмена, затем сохраните занятие</p>
     </div>
 
     <div class="legend">
@@ -410,7 +802,7 @@ function screenAttendance(){
       const cur = draft[id];
       return `<div class="att-row" id="att-${id}" style="${cur?`--flag:${STATUS_META[cur].color}`:''}">
         <div class="name">${a.name}</div>
-        <div class="weight">${a.weight}</div>
+        <div class="weight">${a.currentWeight} кг</div>
         <div class="stamp-grid">
           ${order.map(k=>`<div class="stamp ${cur===k?'active':''}" data-s="${k}" onclick="markAttendance(${s.id},${id},'${k}')">${STATUS_META[k].short}</div>`).join('')}
         </div>
@@ -424,13 +816,14 @@ function screenAttendance(){
 }
 
 function screenProfile(){
+  const coach = currentCoach();
   return `
   ${appBar('Профиль', {hideNet:true})}
   <div class="content">
     <div class="card flag-gold">
-      <p class="eyebrow">Тренер · ${COACH.section}</p>
-      <h3>${COACH.name}</h3>
-      <p class="meta">${COACH.phone}</p>
+      <p class="eyebrow">Тренер · ${coach.section}</p>
+      <h3>${coach.name}</h3>
+      <p class="meta">${coach.phone}</p>
     </div>
     <div class="section-title">О прототипе</div>
     <div class="card flag-muted">
@@ -440,13 +833,14 @@ function screenProfile(){
         здесь данные и сохранение посещаемости симулируются локально, в памяти браузера.
       </p>
     </div>
-    <button class="btn btn-secondary" onclick="doLogout()">Выйти</button>
+    <button class="btn btn-secondary" onclick="doLogout()">Выйти и сменить тренера (демо)</button>
   </div>
   ${bottomNav()}`;
 }
 
 function render(){
   const root = document.getElementById('shell');
+  if(state.screen==='landing'){ root.innerHTML = screenLanding(); return; }
   if(!state.authed){ root.innerHTML = screenLogin(); return; }
   if(state.screen==='dashboard')   root.innerHTML = screenDashboard();
   else if(state.screen==='groups')      root.innerHTML = screenGroups();
@@ -458,9 +852,18 @@ function render(){
 /* =========================================================
    ДЕЙСТВИЯ
    ========================================================= */
-function doLogin(){ state.authed=true; state.screen='dashboard'; render(); }
-function doLogout(){ state.authed=false; state.screen='login'; render(); }
+function goLanding(){ state.screen='landing'; render(); }
+function goLoginFor(disciplineKey){
+  const presetCoach = { greco_roman:2, freestyle:1, women_wrestling:1 }[disciplineKey] || 1;
+  state.loginSelectedCoach = presetCoach;
+  state.screen = 'login';
+  render();
+}
+function selectDemoCoach(id){ state.loginSelectedCoach=id; render(); }
+function doLogin(){ state.coachId=state.loginSelectedCoach; state.authed=true; state.screen='dashboard'; render(); }
+function doLogout(){ state.authed=false; state.coachId=null; state.groupId=null; state.sessionId=null; state.screen='landing'; render(); }
 function goTab(tab){ state.screen=tab; render(); }
+function setGroupFilter(key){ state.groupFilter=key; render(); }
 function openGroup(id){ state.groupId=id; state.screen='groupDetail'; render(); }
 function openSession(id){ state.sessionId=id; state.screen='attendance'; render(); }
 
