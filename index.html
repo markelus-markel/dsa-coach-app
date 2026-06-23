@@ -241,6 +241,20 @@
   .assist-tile svg{ width:21px; height:21px; margin:0 auto 7px; display:block; color:var(--ink-muted); }
   .assist-tile .t{ font-size:12px; font-weight:600; }
   .assist-tile .s{ font-size:10px; color:var(--ink-muted); margin-top:2px; letter-spacing:.04em; text-transform:uppercase; }
+  .assist-row{ display:flex; margin-bottom:8px; }
+  .assist-row > .assist-tile{ margin-right:8px; }
+  .assist-row > .assist-tile:last-child{ margin-right:0; }
+
+  .mic-btn{
+    width:64px; height:64px; border-radius:50%; border:none; cursor:pointer;
+    background:var(--red); color:#fff; display:inline-flex; align-items:center; justify-content:center;
+  }
+  .mic-btn svg{ width:26px; height:26px; }
+  .mic-btn.listening{ background:var(--teal); animation:micPulse 1.2s ease-in-out infinite; }
+  @keyframes micPulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(63,125,114,.45); }
+    50%{ box-shadow:0 0 0 14px rgba(63,125,114,0); }
+  }
 </style>
 </head>
 <body>
@@ -447,6 +461,85 @@ const STATUS_META = {
 };
 
 /* =========================================================
+   DB-МОДУЛЬ — единая точка доступа к данным для ассистента.
+   Сейчас это просто фасад над GROUPS/ATHLETES/COACHES/SESSIONS
+   (никакого отдельного хранилища не появляется — источник правды
+   один, как и был). Смысл модуля — не хранение, а ОДНА точка,
+   через которую что угодно (ассистент, будущий поиск, будущий
+   реальный backend-эндпоинт) задаёт вопрос и получает ответ,
+   не зная, как именно данные устроены внутри.
+
+   DB.search() — простой keyword-matching, НЕ LLM и не выдаётся
+   за него: честный rule-based поиск по тем же mock-данным, что
+   рисуют карточки в приложении. Сюда в будущем подключается
+   реальный backend-поиск/LLM без изменения вызывающего кода.
+
+   ВАЖНО (privacy): анонимный посетитель лендинга (state.authed=false)
+   не получает ответы по согласиям/медоданным — это ровно тот же
+   принцип RBAC, что и во всём остальном приложении, просто
+   применённый к новому каналу (ассистенту), а не только к экранам.
+   ========================================================= */
+const DB = {
+  groups: GROUPS,
+  athletes: ATHLETES,
+  coaches: COACHES,
+  sessions: SESSIONS,
+
+  faq: [
+    { k:['как отметить посещаемость','отметить посещаемость'],
+      a:'Откройте группу → «Отметить посещаемость» у нужного занятия → выберите статус каждому спортсмену → «Сохранить посещаемость».' },
+    { k:['как зачислить','добавить спортсмена','новый спортсмен'],
+      a:'Зачисление в группу делает администратор/проектный офис — в этом прототипе состав групп фиксирован демо-данными.' },
+    { k:['как подать заявку','заявка на турнир','подать заявку'],
+      a:'Подача заявок на турнир — в следующей версии приложения, раздел «Турниры» сейчас в разработке.' },
+  ],
+
+  disciplineCopy: {
+    greco_roman:'Греко-римская борьба — классическая школа: корпус, броски, дисциплина. Базовый раздел Федерации, спортивный резерв.',
+    freestyle:'Вольная борьба — динамика, проходы в ноги, мобильность. Самая массовая база Федерации.',
+    women_wrestling:'Женская борьба — отдельный программный контур: набор, удержание, безопасная среда, родительское доверие, свои тренеры и турниры.',
+  },
+
+  search(query){
+    const q = (query||'').toLowerCase().trim();
+    if(!q) return { answer:'Сначала продиктуйте или напечатайте вопрос.', source:null };
+
+    for(const item of this.faq){
+      if(item.k.some(key=>q.includes(key))) return { answer:item.a, source:'FAQ' };
+    }
+    if(/греко.?рим/.test(q)) return { answer:this.disciplineCopy.greco_roman, source:'DB.disciplineCopy' };
+    if(/вольн/.test(q))      return { answer:this.disciplineCopy.freestyle, source:'DB.disciplineCopy' };
+    if(/женск|қызд/.test(q)) return { answer:this.disciplineCopy.women_wrestling, source:'DB.disciplineCopy' };
+
+    const scopedGroups = state.authed ? myGroups() : GROUPS;
+    const scopeLabel = state.authed ? 'у вас' : 'всего в Федерации (демо-данные)';
+
+    if(/сколько.*групп/.test(q)){
+      return { answer:`Сейчас ${scopeLabel} ${scopedGroups.length} ${scopedGroups.length===1?'группа':'групп'}.`, source:'DB.groups' };
+    }
+    if(/сколько.*спортсмен/.test(q)){
+      const n = scopedGroups.reduce((s,g)=>s+g.athletes.length,0);
+      return { answer:`Сейчас ${scopeLabel} ${n} спортсменов.`, source:'DB.athletes' };
+    }
+    if(/турнир/.test(q)){
+      const withT = scopedGroups.filter(g=>g.nextTournamentInDays!=null);
+      return { answer: withT.length ? withT.map(g=>`${g.name}: турнир через ${g.nextTournamentInDays} дней`).join('; ') : 'Запланированных турниров не нашёл.', source:'DB.groups.nextTournamentInDays' };
+    }
+    if(/посещаем/.test(q)){
+      const withA = scopedGroups.filter(g=>g.mockAttendanceRate!=null);
+      return { answer: withA.length ? withA.map(g=>`${g.name}: ${g.mockAttendanceRate}%`).join('; ') : 'Нет данных по посещаемости для этого набора групп.', source:'DB.groups.mockAttendanceRate' };
+    }
+    if(/согласи/.test(q)){
+      if(!state.authed) return { answer:'Это закрытые данные о спортсменах — войдите как тренер, чтобы получить ответ.', source:null };
+      const missing = scopedGroups.flatMap(g=>g.athletes).filter(id=>ATHLETES[id].consentStatus==='missing');
+      return { answer: missing.length ? `${missing.length} спортсмен(ов) без активного согласия родителя в ваших группах.` : 'У всех ваших спортсменов активные согласия.', source:'DB.athletes.consentStatus' };
+    }
+
+    return { answer:'Не нашёл точного ответа в данных приложения. Попробуйте переформулировать вопрос или откройте раздел «Группы».', source:null };
+  },
+};
+
+/* =========================================================
    СОСТОЯНИЕ (только в памяти — см. примечание про localStorage
    в сопроводительном README.md)
    ========================================================= */
@@ -473,11 +566,12 @@ function fmtDate(d){
    РЕНДЕР
    ========================================================= */
 function appBar(title, opts={}){
+  const home = `<button class="back-btn" onclick="goLanding()" aria-label="На главную"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M4 11l8-7 8 7"/><path d="M6 10v9h12v-9"/></svg></button>`;
   const back = opts.back ? `<button class="back-btn" onclick="${opts.back}" aria-label="Назад">‹</button>` : '';
   const net = opts.hideNet ? '' : `<button class="net-pill ${state.online?'online':'offline'}" onclick="toggleOnline()">
       <span class="net-dot"></span>${state.online?'онлайн':'офлайн'}${state.pendingSync?` · ${state.pendingSync}`:''}
     </button>`;
-  return `<div class="app-bar">${back}<h1>${title}</h1>${net}</div>`;
+  return `<div class="app-bar">${home}${back}<h1>${title}</h1>${net}</div>`;
 }
 
 function bottomNav(){
@@ -518,6 +612,136 @@ function closeSheet(){
   const b = document.getElementById('sheetBackdrop'), s = document.getElementById('sheetPanel');
   if(b){ b.classList.remove('show'); setTimeout(()=>b.remove(),200); }
   if(s){ s.classList.remove('show'); setTimeout(()=>s.remove(),200); }
+  if(recognitionActive && recognition){ try{ recognition.stop(); }catch(e){} }
+}
+
+/* ---------------------------------------------------------
+   Голосовой/ИИ-ассистент — РЕАЛЬНАЯ функциональность, не имитация:
+   - микрофон подключается через Web Speech API (SpeechRecognition),
+     это настоящий доступ к микрофону телефона с системным запросом
+     разрешения браузера — обойти или сэмулировать этот диалог нельзя
+     и не нужно;
+   - ответ ищется через DB.search() — честный keyword-matching по
+     mock-данным приложения, а не подключённая LLM.
+   ВАЖНО: эта функция работает только в полноценной вкладке браузера
+   на HTTPS (после деплоя на GitHub Pages) — во вложенном iframe-превью
+   чата доступ к микрофону обычно блокируется песочницей самого iframe,
+   это ограничение среды показа, а не баг кода.
+   --------------------------------------------------------- */
+let recognition = null;
+let recognitionActive = false;
+
+function supportsSpeech(){ return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+
+function openAssistant(mode){
+  const title = mode==='ai' ? 'ИИ-ассистент' : 'Голосовой помощник';
+  const intro = mode==='ai'
+    ? 'Задайте вопрос голосом или текстом — найду ответ в данных приложения.'
+    : 'Нажмите на микрофон и скажите вопрос.';
+  openSheet(`
+    <h3 style="font-family:var(--font-display);font-size:19px;margin:0 0 4px;">${title}</h3>
+    <p style="font-size:13.5px;color:var(--ink-muted);line-height:1.5;margin:0 0 16px;">${intro}</p>
+    <div style="text-align:center;margin-bottom:16px;">
+      <button id="micBtn" class="mic-btn" onclick="toggleListening()" aria-label="Микрофон">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
+      <div id="micStatus" style="font-size:12px;color:var(--ink-muted);margin-top:8px;">
+        ${supportsSpeech() ? 'Нажмите и говорите' : 'Голосовой ввод не поддерживается этим браузером — введите вопрос текстом'}
+      </div>
+    </div>
+    <div class="field">
+      <label>Вопрос</label>
+      <input id="assistantInput" type="text" placeholder="Например: сколько спортсменов в моей группе?" onkeydown="if(event.key==='Enter')askAssistant()">
+    </div>
+    <button class="btn btn-primary" onclick="askAssistant()">Спросить</button>
+    <div id="assistantAnswer"></div>
+  `);
+}
+
+function toggleListening(){
+  if(!supportsSpeech()){ showToast('Голосовой ввод не поддерживается этим браузером'); return; }
+  if(recognitionActive){ try{ recognition.stop(); }catch(e){} return; }
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SR();
+  recognition.lang = 'ru-RU';
+  recognition.interimResults = true;
+  recognition.continuous = false;
+
+  const micBtn = document.getElementById('micBtn');
+  const status = document.getElementById('micStatus');
+  const input = document.getElementById('assistantInput');
+
+  recognition.onstart = () => {
+    recognitionActive = true;
+    micBtn && micBtn.classList.add('listening');
+    if(status) status.textContent = 'Слушаю...';
+  };
+  recognition.onresult = (e) => {
+    let text = '';
+    for(let i=0;i<e.results.length;i++) text += e.results[i][0].transcript;
+    if(input) input.value = text;
+  };
+  recognition.onerror = (e) => {
+    if(!status) return;
+    status.textContent = e.error==='not-allowed'
+      ? 'Доступ к микрофону запрещён — разрешите в настройках браузера'
+      : 'Не удалось распознать речь — попробуйте ещё раз или введите текстом';
+  };
+  recognition.onend = () => {
+    recognitionActive = false;
+    micBtn && micBtn.classList.remove('listening');
+    if(status) status.textContent = 'Нажмите и говорите';
+  };
+  try{ recognition.start(); }catch(err){ showToast('Микрофон недоступен в этом окне'); }
+}
+
+function askAssistant(){
+  const inputEl = document.getElementById('assistantInput');
+  const answerBox = document.getElementById('assistantAnswer');
+  const q = inputEl ? inputEl.value.trim() : '';
+  if(!q){ showToast('Введите или продиктуйте вопрос'); return; }
+  const result = DB.search(q);
+  if(answerBox){
+    answerBox.innerHTML = `
+      <div class="card flag-blue" style="margin-top:14px;">
+        <p class="eyebrow">Ответ${result.source?` · ${result.source}`:''}</p>
+        <p class="meta" style="color:var(--ink);line-height:1.5;">${result.answer}</p>
+      </div>`;
+  }
+}
+
+/* ---------------------------------------------------------
+   Фото/Видео — настоящая нативная камера телефона через
+   <input type="file" capture>. Это стандартный HTML, без
+   спец-разрешений: на Android открывает реальное приложение камеры.
+   Снятый файл остаётся только в памяти браузера (object URL) —
+   никуда не загружается. В реальном приложении сюда подключилось бы
+   Athlete_Progress_Note/Training_Session как вложение (см. Developer
+   Implementation Pack v1.0).
+   --------------------------------------------------------- */
+function triggerCapture(type){
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = type==='photo' ? 'image/*' : 'video/*';
+  input.capture = 'environment';
+  input.onchange = (e)=>handleCapture(e, type);
+  input.click();
+}
+function handleCapture(event, type){
+  const file = event.target.files && event.target.files[0];
+  if(!file) return;
+  const url = URL.createObjectURL(file);
+  openSheet(`
+    <h3 style="font-family:var(--font-display);font-size:19px;margin:0 0 10px;">${type==='photo'?'Фото снято':'Видео снято'}</h3>
+    ${type==='photo'
+      ? `<img src="${url}" style="width:100%;border-radius:12px;margin-bottom:14px;display:block;">`
+      : `<video src="${url}" controls style="width:100%;border-radius:12px;margin-bottom:14px;display:block;"></video>`}
+    <p style="font-size:13px;color:var(--ink-muted);line-height:1.5;margin:0 0 14px;">
+      Демо: файл хранится только в памяти браузера и никуда не загружается.
+    </p>
+    <span class="disc-badge" style="background:rgba(169,128,46,.16);color:var(--gold)">Прикрепление к занятию — в разработке</span>
+  `);
 }
 
 function disciplineSheetHTML(key){
@@ -614,16 +838,28 @@ function screenLanding(){
     ${DISCIPLINE_ORDER.map(key=>landingDisciplineCard(key)).join('')}
 
     <div class="section-title">Помощники</div>
-    <div style="display:flex;">
-      <div class="card assist-tile" style="margin-right:8px;" onclick="openSheet(comingSoonSheetHTML('Голосовой помощник','Голосовая отметка посещаемости и быстрые команды для тренера в зале, когда руки заняты. Требует реальной speech-to-text интеграции — не симулируем фейковое распознавание.'))">
+    <div class="assist-row">
+      <div class="card assist-tile" onclick="triggerCapture('photo')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13.5" r="3.3"/></svg>
+        <div class="t">Фото</div>
+        <div class="s">камера</div>
+      </div>
+      <div class="card assist-tile" onclick="triggerCapture('video')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
+        <div class="t">Видео</div>
+        <div class="s">камера</div>
+      </div>
+    </div>
+    <div class="assist-row">
+      <div class="card assist-tile" onclick="openAssistant('voice')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
         <div class="t">Голосовой помощник</div>
-        <div class="s">скоро</div>
+        <div class="s">спросить</div>
       </div>
-      <div class="card assist-tile" onclick="openSheet(comingSoonSheetHTML('ИИ-ассистент','Подсказки тренеру по нагрузке группы, авто-черновики прогресс-заметок, ответы родителям на типовые вопросы. Требует реальной LLM-интеграции с бэкендом Федерации.'))">
+      <div class="card assist-tile" onclick="openAssistant('ai')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></svg>
         <div class="t">ИИ-ассистент</div>
-        <div class="s">скоро</div>
+        <div class="s">спросить</div>
       </div>
     </div>
   </div>
@@ -852,7 +1088,7 @@ function render(){
 /* =========================================================
    ДЕЙСТВИЯ
    ========================================================= */
-function goLanding(){ state.screen='landing'; render(); }
+function goLanding(){ state.authed=false; state.coachId=null; state.groupId=null; state.sessionId=null; state.screen='landing'; render(); }
 function goLoginFor(disciplineKey){
   const presetCoach = { greco_roman:2, freestyle:1, women_wrestling:1 }[disciplineKey] || 1;
   state.loginSelectedCoach = presetCoach;
@@ -861,7 +1097,7 @@ function goLoginFor(disciplineKey){
 }
 function selectDemoCoach(id){ state.loginSelectedCoach=id; render(); }
 function doLogin(){ state.coachId=state.loginSelectedCoach; state.authed=true; state.screen='dashboard'; render(); }
-function doLogout(){ state.authed=false; state.coachId=null; state.groupId=null; state.sessionId=null; state.screen='landing'; render(); }
+function doLogout(){ goLanding(); }
 function goTab(tab){ state.screen=tab; render(); }
 function setGroupFilter(key){ state.groupFilter=key; render(); }
 function openGroup(id){ state.groupId=id; state.screen='groupDetail'; render(); }
