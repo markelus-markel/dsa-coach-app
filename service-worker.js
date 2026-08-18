@@ -4,7 +4,7 @@
 // жить в IndexedDB на стороне приложения + Background Sync API здесь —
 // в этом прототипе она симулируется в памяти (см. index.html, toggleOnline()).
 
-const CACHE_NAME = 'dsa-coach-shell-v1';
+const CACHE_NAME = 'dsa-coach-shell-v2';
 const APP_SHELL = [
   './index.html',
   './manifest.json',
@@ -28,7 +28,10 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Cache-first для app shell, network-first для всего остального (когда появится реальный API)
+// Network-first для app shell: сначала пробуем свежую версию с сервера,
+// офлайн-кеш — только как фоллбэк, когда сети нет вообще.
+// (Раньше было cache-first — из-за этого обновления index.html не доходили
+// до уже установивших PWA пользователей, пока не бампалась версия кеша вручную.)
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
@@ -38,7 +41,12 @@ self.addEventListener('fetch', (event) => {
 
   if (isShellRequest) {
     event.respondWith(
-      caches.match(request).then((cached) => cached || fetch(request))
+      fetch(request)
+        .then((fresh) => {
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, fresh.clone()));
+          return fresh;
+        })
+        .catch(() => caches.match(request))
     );
     return;
   }
