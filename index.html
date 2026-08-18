@@ -34,6 +34,28 @@
     --font-display:'Oswald', 'Arial Narrow', sans-serif;
     --font-body:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
+  /* Тёмная тема: тот же токен-набор, значения из палитры логотипа федерации
+     (оливково-золотой акцент, тёмно-тёплый фон), маппинг дисциплин на цвета
+     сохранён 1-в-1 с светлой темой (freestyle=red, greco_roman=blue, women=teal). */
+  [data-theme="dark"]{
+    --bg:#15140F;
+    --surface:#1C1B14;
+    --surface-raised:#242319;
+    --ink:#F2EEE2;
+    --ink-muted:#A8A290;
+    --hairline:#332F1E;
+    --red:#D9645A;
+    --red-dark:#B6332E;
+    --blue:#6C93BE;
+    --gold:#D4AD3B;
+    --teal:#5AAA98;
+    --present:#7FAD72;
+    --late:#D6A855;
+    --excused:#8CAECB;
+    --sick:#9C9284;
+    --absent:#D9645A;
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.4);
+  }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
   body{
@@ -554,7 +576,33 @@ const state = {
   online:true,
   pendingSync:0,
   attendance:{}, // sessionId -> {athleteId: status}
+  theme: (function(){
+    try{ return localStorage.getItem('dsa_theme') || 'light'; }
+    catch(e){ return 'light'; } // приватный режим/недоступный storage — просто светлая тема по умолчанию
+  })(),
 };
+
+/* Тема — это настройка отображения, а не пользовательские данные атлетов/посещаемости,
+   поэтому её отдельно храним в localStorage (в отличие от остального state, см. примечание выше). */
+function applyTheme(){
+  document.documentElement.setAttribute('data-theme', state.theme);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', state.theme==='dark' ? '#15140F' : '#7A2331');
+}
+function toggleTheme(){
+  state.theme = state.theme==='dark' ? 'light' : 'dark';
+  try{ localStorage.setItem('dsa_theme', state.theme); }catch(e){}
+  applyTheme();
+  render();
+}
+function themeToggleBtn(){
+  const isDark = state.theme==='dark';
+  return `<button class="back-btn" onclick="toggleTheme()" aria-label="${isDark?'Включить светлую тему':'Включить тёмную тему'}">
+    ${isDark
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><circle cx="12" cy="12" r="4.2"/><line x1="12" y1="2.5" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="21.5"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="2.5" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="21.5" y2="12"/><line x1="4.2" y1="19.8" x2="6" y2="18"/><line x1="18" y1="6" x2="19.8" y2="4.2"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M20 14.5A8.5 8.5 0 0111 3a8.5 8.5 0 108.9 11.5z"/></svg>'}
+  </button>`;
+}
 
 function fmtDate(d){
   const [y,m,day]=d.split('-');
@@ -571,7 +619,7 @@ function appBar(title, opts={}){
   const net = opts.hideNet ? '' : `<button class="net-pill ${state.online?'online':'offline'}" onclick="toggleOnline()">
       <span class="net-dot"></span>${state.online?'онлайн':'офлайн'}${state.pendingSync?` · ${state.pendingSync}`:''}
     </button>`;
-  return `<div class="app-bar">${home}${back}<h1>${title}</h1>${net}</div>`;
+  return `<div class="app-bar">${home}${back}<h1>${title}</h1>${themeToggleBtn()}${net}</div>`;
 }
 
 function bottomNav(){
@@ -824,6 +872,7 @@ function screenLanding(){
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
     <h1>Digital Strong Abay</h1>
+    ${themeToggleBtn()}
   </div>
   <div class="content">
     <div class="login-hero" style="padding-top:24px;">
@@ -870,7 +919,10 @@ function screenLogin(){
   const sel = COACHES.find(c=>c.id===state.loginSelectedCoach);
   return `
   <div class="content" style="padding-bottom:24px;">
-    <button class="back-btn" style="margin-bottom:4px;" onclick="goLanding()" aria-label="На главную">‹</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+      <button class="back-btn" onclick="goLanding()" aria-label="На главную">‹</button>
+      ${themeToggleBtn()}
+    </div>
     <div class="login-hero" style="padding-top:18px;">
       <div class="corner-mark"><svg viewBox="0 0 24 24"><rect x="5" y="3" width="2" height="18" rx="1"/><polygon points="7,4 19,8 7,12"/></svg></div>
       <h1>Digital Strong Abay</h1>
@@ -1061,6 +1113,16 @@ function screenProfile(){
       <h3>${coach.name}</h3>
       <p class="meta">${coach.phone}</p>
     </div>
+    <div class="section-title">Оформление</div>
+    <div class="card flag-gold" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+      <div>
+        <h3 style="margin-bottom:2px;">Тёмная тема</h3>
+        <p class="meta">${state.theme==='dark' ? 'Включена' : 'Выключена · светлая тема по умолчанию'}</p>
+      </div>
+      <button class="btn ${state.theme==='dark' ? 'btn-primary' : 'btn-secondary'}" style="width:auto; padding:10px 16px; margin:0;" onclick="toggleTheme()">
+        ${state.theme==='dark' ? 'Вкл' : 'Выкл'}
+      </button>
+    </div>
     <div class="section-title">О прототипе</div>
     <div class="card flag-muted">
       <p class="meta" style="line-height:1.6;">
@@ -1153,6 +1215,7 @@ if('serviceWorker' in navigator){
   });
 }
 
+applyTheme();
 render();
 </script>
 </body>
