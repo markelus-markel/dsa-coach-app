@@ -157,6 +157,18 @@
     font-size:15px; font-family:inherit; background:var(--surface-raised); color:var(--ink);
   }
   .field input:focus{ border-color:var(--blue); outline:none; }
+  .field textarea{
+    width:100%; padding:13px 14px; border-radius:var(--radius-sm); border:1.5px solid var(--hairline);
+    font-size:14.5px; font-family:inherit; background:var(--surface-raised); color:var(--ink);
+    resize:vertical; min-height:64px;
+  }
+  .field textarea:focus{ border-color:var(--blue); outline:none; }
+  .field .hint{ font-size:11.5px; color:var(--ink-muted); margin-top:4px; }
+
+  .report-summary-row{ display:flex; justify-content:space-between; padding:8px 0; font-size:13.5px; }
+  .report-summary-row + .report-summary-row{ border-top:1px solid var(--hairline); }
+  .report-summary-row .k{ color:var(--ink-muted); }
+  .report-summary-row .v{ font-weight:600; font-variant-numeric:tabular-nums; }
 
   .login-hero{ text-align:center; padding:48px 8px 28px; }
   .login-hero .corner-mark{
@@ -333,6 +345,33 @@ const GENDER_DIVISION_LABEL = { male:'Юноши', female:'Девушки', mixe
 const PROGRAM_STREAM_LABEL = {
   mass:'Массовый спорт', reserve:'Спортивный резерв', regional_team:'Сборная области',
   women_development:'Қыздар күресі · программа развития',
+};
+
+/* ---------------------------------------------------------
+   Тренерская отчётность (Training Session Report).
+   Канонические словари для полей "Итог тренировки" на экране
+   посещаемости — порядок в объекте = порядок отображения в UI. */
+const TRAINING_TYPE_LABEL = {
+  general_physical:'ОФП',
+  special_physical:'СФП',
+  technique:'Техника',
+  tactics:'Тактика',
+  sparring:'Спарринг',
+  control_bouts:'Контрольные схватки',
+  recovery:'Восстановление',
+  mixed:'Смешанная',
+  other:'Другое',
+};
+const PLAN_STATUS_LABEL = {
+  completed:'Выполнен',
+  partial:'Выполнен частично',
+  not_completed:'Не выполнен',
+};
+const GROUP_CONDITION_LABEL = {
+  good:'Хорошее',
+  normal:'Нормальное',
+  fatigue:'Повышенная усталость',
+  attention:'Требует внимания',
 };
 
 // Акценты дисциплин: греко-римская = steel-blue, вольная = красный
@@ -576,11 +615,40 @@ const state = {
   online:true,
   pendingSync:0,
   attendance:{}, // sessionId -> {athleteId: status}
+  reports:{}, // sessionId -> Training Session Report (см. buildCoachReport)
+  reportPeriod:'month',
   theme: (function(){
     try{ return localStorage.getItem('dsa_theme') || 'light'; }
     catch(e){ return 'light'; } // приватный режим/недоступный storage — просто светлая тема по умолчанию
   })(),
 };
+
+/* ---------------------------------------------------------
+   Демо-заполнение для уже "conducted" сессий (103,104,106,108),
+   чтобы экран "Отчёт" не был пустым при первом входе у всех трёх
+   демо-тренеров. Реальный отчёт формируется тем же completeTraining(),
+   что и для новых занятий — эти записи просто их "прошлое" состояние. */
+state.attendance[103] = {1:'present',2:'present',3:'present',4:'late',5:'present'};
+state.attendance[104] = {15:'present',16:'present',17:'present',18:'sick',19:'present',20:'present'};
+state.attendance[106] = {8:'present',9:'present',10:'present',11:'absent',12:'present',13:'present',14:'present'};
+state.attendance[108] = {6:'present',7:'excused'};
+
+state.reports[103] = { sessionId:103, coachId:1, groupId:1, date:'2026-06-18',
+  trainingType:'technique', topic:'Проход в ноги. Защита от прохода. 5 серий по 3 минуты.',
+  groupCondition:'normal', planStatus:'completed', coachComment:'Группа собранная, чётко выполняли связки.',
+  incidents:'', media:[], completedAt:'2026-06-18T19:05:00' };
+state.reports[104] = { sessionId:104, coachId:1, groupId:2, date:'2026-06-19',
+  trainingType:'sparring', topic:'Учебные схватки по заданию, ротация партнёров.',
+  groupCondition:'fatigue', planStatus:'partial', coachComment:'',
+  incidents:'Одна спортсменка отпросилась раньше по семейным обстоятельствам.', media:[], completedAt:'2026-06-19T19:10:00' };
+state.reports[106] = { sessionId:106, coachId:2, groupId:3, date:'2026-06-18',
+  trainingType:'general_physical', topic:'ОФП: работа на выносливость и координацию.',
+  groupCondition:'good', planStatus:'completed', coachComment:'Хорошая динамика группы.',
+  incidents:'', media:[], completedAt:'2026-06-18T20:05:00' };
+state.reports[108] = { sessionId:108, coachId:3, groupId:4, date:'2026-06-19',
+  trainingType:'technique', topic:'Базовые броски через спину.',
+  groupCondition:'attention', planStatus:'not_completed', coachComment:'',
+  incidents:'Не хватило времени зала — пересечение по расписанию с другой секцией.', media:[], completedAt:'2026-06-19T17:35:00' };
 
 /* Тема — это настройка отображения, а не пользовательские данные атлетов/посещаемости,
    поэтому её отдельно храним в localStorage (в отличие от остального state, см. примечание выше). */
@@ -627,6 +695,7 @@ function bottomNav(){
   return `<div class="bottom-nav">
     ${item('dashboard','Дашборд','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>')}
     ${item('groups','Группы','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20c0-3.3 2.5-5.5 5.5-5.5s5.5 2.2 5.5 5.5"/><circle cx="17" cy="8.5" r="2.4"/><path d="M15 14.6c2.6.3 4.5 2.2 4.5 5"/></svg>')}
+    ${item('report','Отчёт','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/><line x1="9.5" y1="12.5" x2="9.5" y2="16.5"/><line x1="12.5" y1="10.5" x2="12.5" y2="16.5"/><line x1="15.5" y1="14" x2="15.5" y2="16.5"/></svg>')}
     ${item('profile','Профиль','<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="3.5"/><path d="M4.5 20c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5"/></svg>')}
   </div>`;
 }
@@ -768,18 +837,26 @@ function askAssistant(){
    Athlete_Progress_Note/Training_Session как вложение (см. Developer
    Implementation Pack v1.0).
    --------------------------------------------------------- */
-function triggerCapture(type){
+function triggerCapture(type, sessionId){
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = type==='photo' ? 'image/*' : 'video/*';
   input.capture = 'environment';
-  input.onchange = (e)=>handleCapture(e, type);
+  input.onchange = (e)=>handleCapture(e, type, sessionId);
   input.click();
 }
-function handleCapture(event, type){
+function handleCapture(event, type, sessionId){
   const file = event.target.files && event.target.files[0];
   if(!file) return;
   const url = URL.createObjectURL(file);
+
+  if(sessionId){
+    getReport(sessionId).media.push({ type, name:file.name, url, createdAt:new Date().toISOString() });
+    render();
+    showToast(`${type==='photo'?'Фото':'Видео'} прикреплено к занятию`);
+    return;
+  }
+
   openSheet(`
     <h3 style="font-family:var(--font-display);font-size:19px;margin:0 0 10px;">${type==='photo'?'Фото снято':'Видео снято'}</h3>
     ${type==='photo'
@@ -788,7 +865,7 @@ function handleCapture(event, type){
     <p style="font-size:13px;color:var(--ink-muted);line-height:1.5;margin:0 0 14px;">
       Демо: файл хранится только в памяти браузера и никуда не загружается.
     </p>
-    <span class="disc-badge" style="background:rgba(169,128,46,.16);color:var(--gold)">Прикрепление к занятию — в разработке</span>
+    <span class="disc-badge" style="background:rgba(169,128,46,.16);color:var(--gold)">Откройте занятие, чтобы прикрепить к тренировке</span>
   `);
 }
 
@@ -1064,12 +1141,23 @@ function screenGroupDetail(){
   ${bottomNav()}`;
 }
 
+// Однократный выбор значения из словаря через ряд pill-кнопок (вид тренировки,
+// статус плана, состояние группы) — переиспользует .filter-pill, но пишет
+// в Training Session Report, а не в фильтр списка групп.
+function reportPillGroup(sessionId, field, dict, current){
+  return `<div class="filter-row">
+    ${Object.keys(dict).map(key=>`<button type="button" class="filter-pill ${current===key?'active':''}" onclick="setReportField(${sessionId},'${field}','${key}')">${dict[key]}</button>`).join('')}
+  </div>`;
+}
+
 function screenAttendance(){
   const s = SESSIONS.find(s=>s.id===state.sessionId);
   const g = GROUPS.find(g=>g.id===s.groupId);
   const draft = state.attendance[s.id] || {};
   const order = ['present','late','excused','sick','absent'];
   const accent = getDisciplineAccent(g);
+  const r = getReport(s.id);
+  const isConducted = s.status==='conducted';
 
   return `
   ${appBar('Посещаемость', {back:`openGroup(${g.id})`})}
@@ -1078,7 +1166,7 @@ function screenAttendance(){
       ${getDisciplineBadge(g)}
       <p class="eyebrow" style="margin-top:8px">${fmtDate(s.date)} · ${s.time}</p>
       <h3>${g.name}</h3>
-      <p class="meta">${GENDER_DIVISION_LABEL[g.gender_division]} ${g.ageCategory} · отметьте каждого спортсмена, затем сохраните занятие</p>
+      <p class="meta">${GENDER_DIVISION_LABEL[g.gender_division]} ${g.ageCategory} · отметьте каждого спортсмена, затем завершите тренировку</p>
     </div>
 
     <div class="legend">
@@ -1097,10 +1185,232 @@ function screenAttendance(){
       </div>`;
     }).join('')}
 
-    <button class="btn btn-primary" style="margin-top:8px" onclick="saveAttendance(${s.id})">
-      Сохранить посещаемость
+    <div class="section-title">Итог тренировки</div>
+
+    <div class="field">
+      <label>Вид тренировки</label>
+      ${reportPillGroup(s.id, 'trainingType', TRAINING_TYPE_LABEL, r.trainingType)}
+    </div>
+
+    <div class="field">
+      <label>Тема / содержание тренировки</label>
+      <input id="topic-${s.id}" placeholder="Например: проход в ноги, 5 серий по 3 минуты"
+        value="${r.topic.replace(/"/g,'&quot;')}"
+        oninput="setReportText(${s.id},'topic',this.value)">
+    </div>
+
+    <div class="field">
+      <label>Статус выполнения плана</label>
+      ${reportPillGroup(s.id, 'planStatus', PLAN_STATUS_LABEL, r.planStatus)}
+    </div>
+
+    <div class="field">
+      <label>Состояние группы</label>
+      ${reportPillGroup(s.id, 'groupCondition', GROUP_CONDITION_LABEL, r.groupCondition)}
+    </div>
+
+    <div class="field">
+      <label>Комментарий тренера <span style="font-weight:400">· необязательно</span></label>
+      <textarea id="comment-${s.id}" placeholder="Прогресс, дисциплина, особенности тренировки, рекомендации"
+        oninput="setReportText(${s.id},'coachComment',this.value)">${r.coachComment}</textarea>
+    </div>
+
+    <div class="field">
+      <label>Инциденты / проблемы <span style="font-weight:400">· необязательно</span></label>
+      <textarea id="incidents-${s.id}" placeholder="Травма, конфликт, проблема с оборудованием, отсутствие меддопуска..."
+        oninput="setReportText(${s.id},'incidents',this.value)">${r.incidents}</textarea>
+      <p class="hint">Не путать с комментарием выше — сюда только то, что требует отдельного внимания.</p>
+    </div>
+
+    <div class="field">
+      <label>Фото и видео <span style="font-weight:400">· необязательно</span></label>
+      <div class="assist-row">
+        <div class="card assist-tile" onclick="triggerCapture('photo', ${s.id})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13.5" r="3.3"/></svg>
+          <div class="t">Фото</div>
+          <div class="s">${r.media.filter(m=>m.type==='photo').length || 'камера'}</div>
+        </div>
+        <div class="card assist-tile" onclick="triggerCapture('video', ${s.id})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>
+          <div class="t">Видео</div>
+          <div class="s">${r.media.filter(m=>m.type==='video').length || 'камера'}</div>
+        </div>
+      </div>
+      <p class="hint">Демо: файлы существуют только в памяти браузера и никуда не загружаются.</p>
+    </div>
+
+    <button class="btn btn-primary" style="margin-top:8px" onclick="completeTraining(${s.id})">
+      ${isConducted ? 'Обновить и завершить тренировку' : 'Завершить тренировку'}
     </button>
   </div>`;
+}
+
+/* ---------------------------------------------------------
+   Coach Reporting Cycle — месячный/недельный/квартальный отчёт
+   ПРОИЗВОДНЫЙ от Training Session Report + Attendance, не отдельный
+   источник данных (см. TASK п.16). Единственный источник правды —
+   SESSIONS + state.attendance + state.reports; buildCoachReport()
+   просто их агрегирует за период для одного тренера (RBAC: только
+   свои группы, см. myGroupsOf). */
+function periodRange(period, anchorDate){
+  const [y,m,d] = anchorDate.split('-').map(Number);
+  const anchor = new Date(y, m-1, d);
+  let from;
+  if(period==='week'){
+    from = new Date(anchor); from.setDate(from.getDate()-6);
+  } else if(period==='quarter'){
+    from = new Date(anchor.getFullYear(), anchor.getMonth()-2, 1);
+  } else { // month
+    from = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  }
+  const toISO = dt=>dt.toISOString().slice(0,10);
+  return { from:toISO(from), to:anchorDate };
+}
+
+function buildCoachReport(coachId, dateFrom, dateTo){
+  const groups = myGroupsOf(coachId);
+  const groupIds = groups.map(g=>g.id);
+  const athleteCount = new Set(groups.flatMap(g=>g.athletes)).size;
+  const sessions = SESSIONS.filter(s=>groupIds.includes(s.groupId) && s.date>=dateFrom && s.date<=dateTo);
+  const conductedSessions = sessions.filter(s=>s.status==='conducted' && state.reports[s.id] && state.reports[s.id].completedAt);
+  const reports = conductedSessions.map(s=>state.reports[s.id]);
+
+  const trainingHours = conductedSessions.reduce((sum,s)=>sum+parseDurationHours(s.time), 0);
+
+  // Посещаемость — по всем conducted-сессиям периода
+  const counts = { present:0, late:0, excused:0, sick:0, absent:0 };
+  conductedSessions.forEach(s=>{
+    const draft = state.attendance[s.id] || {};
+    Object.values(draft).forEach(status=>{ if(counts[status]!=null) counts[status]++; });
+  });
+  const totalMarks = Object.values(counts).reduce((a,b)=>a+b,0);
+  const avgAttendance = totalMarks ? Math.round((counts.present+counts.late)/totalMarks*100) : null;
+
+  const typeBreakdown = {};
+  reports.forEach(r=>{ typeBreakdown[r.trainingType] = (typeBreakdown[r.trainingType]||0)+1; });
+
+  return {
+    coach: COACHES.find(c=>c.id===coachId),
+    groups, athleteCount,
+    planned: sessions.length,
+    conducted: conductedSessions.length,
+    completionPct: sessions.length ? Math.round(conductedSessions.length/sessions.length*100) : 0,
+    trainingHours,
+    avgAttendance, attendanceCounts:counts,
+    typeBreakdown,
+    photoSessions: reports.filter(r=>r.media.some(m=>m.type==='photo')).length,
+    videoSessions: reports.filter(r=>r.media.some(m=>m.type==='video')).length,
+    partialCount: reports.filter(r=>r.planStatus==='partial').length,
+    notCompletedCount: reports.filter(r=>r.planStatus==='not_completed').length,
+    incidentsCount: reports.filter(r=>r.incidents && r.incidents.trim()).length,
+    sessionsDetail: conductedSessions
+      .slice().sort((a,b)=>b.date.localeCompare(a.date))
+      .map(s=>({ session:s, group:groups.find(g=>g.id===s.groupId), report:state.reports[s.id],
+        attendance:state.attendance[s.id]||{} })),
+  };
+}
+
+function setReportPeriod(period){ state.reportPeriod = period; render(); }
+
+function reportSessionDetailSheet(sessionId){
+  const s = SESSIONS.find(s=>s.id===sessionId);
+  const g = GROUPS.find(g=>g.id===s.groupId);
+  const r = state.reports[sessionId];
+  const draft = state.attendance[sessionId] || {};
+  const order = ['present','late','excused','sick','absent'];
+  const attSummary = order.map(k=>`${STATUS_META[k].short} ${Object.values(draft).filter(v=>v===k).length}`).join(' · ');
+  return `
+    ${getDisciplineBadge(g)}
+    <h3 style="font-family:var(--font-display);font-size:19px;margin:10px 0 2px;">${g.name}</h3>
+    <p class="meta" style="margin:0 0 12px;">${fmtDate(s.date)} · ${s.time}</p>
+    <div class="report-summary-row"><span class="k">Вид тренировки</span><span class="v">${TRAINING_TYPE_LABEL[r.trainingType]}</span></div>
+    <div class="report-summary-row"><span class="k">План</span><span class="v">${PLAN_STATUS_LABEL[r.planStatus]}</span></div>
+    <div class="report-summary-row"><span class="k">Состояние группы</span><span class="v">${GROUP_CONDITION_LABEL[r.groupCondition]}</span></div>
+    <div class="report-summary-row"><span class="k">Посещаемость</span><span class="v">${attSummary}</span></div>
+    ${r.topic ? `<p class="section-title" style="margin-top:16px">Тема</p><p class="meta" style="line-height:1.5">${r.topic}</p>` : ''}
+    ${r.coachComment ? `<p class="section-title">Комментарий тренера</p><p class="meta" style="line-height:1.5">${r.coachComment}</p>` : ''}
+    ${r.incidents ? `<p class="section-title">Инциденты</p><p class="meta" style="line-height:1.5;color:var(--red-dark)">${r.incidents}</p>` : ''}
+    ${r.media.length ? `<p class="section-title">Фото/видео</p><p class="meta">${r.media.filter(m=>m.type==='photo').length} фото · ${r.media.filter(m=>m.type==='video').length} видео</p>` : ''}
+    <button class="btn btn-secondary" style="margin-top:14px" onclick="closeSheet();openSession(${s.id})">Открыть занятие</button>
+  `;
+}
+
+function screenReport(){
+  const periods = [{key:'week',label:'Неделя'},{key:'month',label:'Месяц'},{key:'quarter',label:'Квартал'}];
+  const range = periodRange(state.reportPeriod, TODAY);
+  const rep = buildCoachReport(state.coachId, range.from, range.to);
+  const monthLabel = (()=>{
+    const months=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+    const [y,m] = TODAY.split('-'); return `${months[+m-1]} ${y}`;
+  })();
+
+  return `
+  ${appBar('Отчёт')}
+  <div class="content">
+    <div class="filter-row">
+      ${periods.map(p=>`<button class="filter-pill ${state.reportPeriod===p.key?'active':''}" onclick="setReportPeriod('${p.key}')">${p.label}</button>`).join('')}
+    </div>
+
+    <div class="card flag-gold">
+      <p class="eyebrow">Отчёт тренера · ${monthLabel}</p>
+      <h3>${rep.coach.name}</h3>
+      <p class="meta">${rep.coach.section} · ${rep.groups.length} групп · ${rep.athleteCount} спортсменов</p>
+    </div>
+
+    <div class="section-title">Тренировки</div>
+    <div class="card flag-muted">
+      <div class="report-summary-row"><span class="k">Запланировано</span><span class="v">${rep.planned}</span></div>
+      <div class="report-summary-row"><span class="k">Проведено</span><span class="v">${rep.conducted}</span></div>
+      <div class="report-summary-row"><span class="k">Выполнение</span><span class="v">${rep.completionPct}%</span></div>
+      <div class="report-summary-row"><span class="k">Тренировочных часов</span><span class="v">${rep.trainingHours}</span></div>
+    </div>
+
+    ${rep.avgAttendance!=null ? `
+    <div class="section-title">Посещаемость</div>
+    <div class="card flag-muted">
+      <div class="report-summary-row"><span class="k">Средняя посещаемость</span><span class="v">${rep.avgAttendance}%</span></div>
+      <div class="report-summary-row"><span class="k">Неявка</span><span class="v">${rep.attendanceCounts.absent}</span></div>
+      <div class="report-summary-row"><span class="k">Болен</span><span class="v">${rep.attendanceCounts.sick}</span></div>
+      <div class="report-summary-row"><span class="k">Освобождён</span><span class="v">${rep.attendanceCounts.excused}</span></div>
+      <div class="report-summary-row"><span class="k">Опоздал</span><span class="v">${rep.attendanceCounts.late}</span></div>
+    </div>` : ''}
+
+    ${Object.keys(rep.typeBreakdown).length ? `
+    <div class="section-title">Структура тренировок</div>
+    <div class="card flag-muted">
+      ${Object.keys(TRAINING_TYPE_LABEL).filter(k=>rep.typeBreakdown[k]).map(k=>
+        `<div class="report-summary-row"><span class="k">${TRAINING_TYPE_LABEL[k]}</span><span class="v">${rep.typeBreakdown[k]}</span></div>`
+      ).join('')}
+    </div>` : ''}
+
+    ${rep.conducted ? `
+    <div class="section-title">Доказательная база</div>
+    <div class="card flag-muted">
+      <div class="report-summary-row"><span class="k">Занятий с фото</span><span class="v">${rep.photoSessions}</span></div>
+      <div class="report-summary-row"><span class="k">Занятий с видео</span><span class="v">${rep.videoSessions}</span></div>
+    </div>` : ''}
+
+    ${(rep.partialCount || rep.notCompletedCount || rep.incidentsCount) ? `
+    <div class="section-title">Сигналы</div>
+    <div class="card flag-muted">
+      ${rep.partialCount ? `<div class="report-summary-row"><span class="k">Выполнено частично</span><span class="v">${rep.partialCount}</span></div>` : ''}
+      ${rep.notCompletedCount ? `<div class="report-summary-row"><span class="k">Не выполнено</span><span class="v">${rep.notCompletedCount}</span></div>` : ''}
+      ${rep.incidentsCount ? `<div class="report-summary-row"><span class="k">Инцидентов</span><span class="v">${rep.incidentsCount}</span></div>` : ''}
+    </div>` : ''}
+
+    <div class="section-title">Детализация занятий</div>
+    ${rep.sessionsDetail.length ? rep.sessionsDetail.map(d=>{
+      const attended = Object.keys(d.attendance).length;
+      return `<div class="card" style="--flag:${getDisciplineAccent(d.group)};cursor:pointer" onclick="openSheet(reportSessionDetailSheet(${d.session.id}))">
+        ${getDisciplineBadge(d.group)}
+        <p class="eyebrow" style="margin-top:8px">${fmtDate(d.session.date)} · ${d.session.time}</p>
+        <h3>${d.group.name}</h3>
+        <p class="meta">${TRAINING_TYPE_LABEL[d.report.trainingType]} · ${d.report.topic}</p>
+        <p class="meta" style="margin-top:4px">Посещаемость ${attended}/${d.group.athletes.length} · План: ${PLAN_STATUS_LABEL[d.report.planStatus]}${d.report.media.length ? ` · ${d.report.media.length} медиа` : ''}</p>
+      </div>`;
+    }).join('') : `<div class="empty"><div class="flag-mini"></div>За этот период нет завершённых тренировок</div>`}
+  </div>
+  ${bottomNav()}`;
 }
 
 function screenProfile(){
@@ -1144,6 +1454,7 @@ function render(){
   else if(state.screen==='groups')      root.innerHTML = screenGroups();
   else if(state.screen==='groupDetail') root.innerHTML = screenGroupDetail();
   else if(state.screen==='attendance')  root.innerHTML = screenAttendance();
+  else if(state.screen==='report')      root.innerHTML = screenReport();
   else if(state.screen==='profile')     root.innerHTML = screenProfile();
 }
 
@@ -1180,19 +1491,70 @@ function markAttendance(sessionId, athleteId, status){
   render();
 }
 
-function saveAttendance(sessionId){
-  const draft = state.attendance[sessionId] || {};
+/* ---------------------------------------------------------
+   Training Session Report — черновик хранится в state.reports,
+   по одной записи на sessionId. getReport() всегда возвращает
+   объект (создаёт пустой черновик при первом обращении), чтобы
+   экран посещаемости мог просто читать/писать поля не проверяя
+   на undefined на каждом шагу. */
+function getReport(sessionId){
+  if(!state.reports[sessionId]){
+    const s = SESSIONS.find(s=>s.id===sessionId);
+    state.reports[sessionId] = {
+      sessionId, coachId:state.coachId, groupId:s.groupId, date:s.date,
+      trainingType:null, topic:'', groupCondition:null, planStatus:null,
+      coachComment:'', incidents:'', media:[], completedAt:null,
+    };
+  }
+  return state.reports[sessionId];
+}
+function setReportField(sessionId, field, value){
+  getReport(sessionId)[field] = value;
+  render();
+}
+function setReportText(sessionId, field, value){
+  // текстовые поля не должны дёргать полный render() на каждый символ —
+  // иначе курсор в textarea/inpute будет прыгать в начало при каждом кейстроке
+  getReport(sessionId)[field] = value;
+}
+
+// "17:00–19:00" -> 2 (часы, с точностью до получаса)
+function parseDurationHours(timeStr){
+  const [from,to] = timeStr.split('–');
+  const toMin = t=>{ const [h,m]=t.split(':').map(Number); return h*60+m; };
+  return Math.max(0,(toMin(to)-toMin(from))/60);
+}
+
+// Возвращает список того, что ещё не заполнено (человекочитаемо) — пусто, если можно завершать
+function trainingSummaryMissing(sessionId){
   const g = GROUPS.find(g=>g.id===SESSIONS.find(s=>s.id===sessionId).groupId);
-  const marked = Object.keys(draft).length;
-  if(marked < g.athletes.length){
-    showToast(`Отмечено ${marked} из ${g.athletes.length} — отметьте всех перед сохранением`);
+  const draft = state.attendance[sessionId] || {};
+  const r = getReport(sessionId);
+  const missing = [];
+  if(Object.keys(draft).length < g.athletes.length) missing.push('отметьте всех спортсменов');
+  if(!r.trainingType) missing.push('выберите вид тренировки');
+  if(!r.topic || !r.topic.trim()) missing.push('заполните тему тренировки');
+  if(!r.planStatus) missing.push('укажите статус выполнения плана');
+  if(!r.groupCondition) missing.push('укажите состояние группы');
+  return missing;
+}
+
+function completeTraining(sessionId){
+  const missing = trainingSummaryMissing(sessionId);
+  if(missing.length){
+    showToast(`Не заполнено: ${missing.join(', ')}`);
     return;
   }
+  const s = SESSIONS.find(s=>s.id===sessionId);
+  const g = GROUPS.find(g=>g.id===s.groupId);
+  const r = getReport(sessionId);
+  s.status = 'conducted';
+  r.completedAt = new Date().toISOString();
   if(state.online){
-    showToast(`Посещаемость сохранена · ${marked} из ${g.athletes.length} отмечено`);
+    showToast(`Тренировка завершена · отчёт сохранён · ${g.athletes.length} из ${g.athletes.length} отмечено`);
   } else {
     state.pendingSync += 1;
-    showToast('Сохранено локально · синхронизируется при подключении к сети');
+    showToast('Отчёт сохранён локально · синхронизируется при подключении к сети');
   }
   setTimeout(()=>openGroup(g.id), 650);
 }
